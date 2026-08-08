@@ -358,3 +358,75 @@ El symlink de desarrollo sí está puesto
 (`~/.local/state/noctalia/plugins/materialized/daf3r-claude-usage`), que es
 reversible con un `rm`. Habilitar el plugin, añadir el widget a la barra y
 recargar el shell quedan pendientes del usuario.
+
+---
+
+## Cierre de cabos sueltos
+
+El plan copiaba cuatro fixtures en la Task 1 y no volvía a mencionarlos, y
+dejaba las traducciones sin ninguna comprobación. Ambos huecos se cierran aquí.
+
+### 23. Los fixtures heredados ya se usan: `tests/fixtures.test.luau`
+
+**Problema:** las Tasks 1 a 12 no cargan `tests/fixtures/*.json` en ningún
+sitio, y con `io` ausente y sin parser de JSON tampoco podrían. Cuatro ficheros
+de payload real de la API estaban en el repo como peso muerto.
+
+**Decisión:** `tests/json2luau.py` los convierte a un módulo Luau y `run.fish`
+lo genera antes de la suite. `fixtures.test.luau` los hace pasar por
+`normalizeUsage` → `pickPrimary` → `sortForPanel` → `notificationsFor` → los
+formateadores, y afirma sobre lo que el widget y el panel acabarían pintando.
+Es lo más cerca de una prueba extremo a extremo que se puede llegar sin shell.
+
+Lo que aporta y no cubrían los tests sintéticos: `parseIsoMs` contra el formato
+**exacto** de la API (`2026-08-03T17:10:00.330605+00:00`, con microsegundos y
+offset), que era el punto que la auto-revisión del plan marcaba como el más
+frágil del port.
+
+Detalles del conversor: un `null` de JSON se **omite** en vez de traducirse,
+porque las tablas de Lua no guardan nil y la ausencia es justo lo que esperan
+las guardas de `logic.luau`. El módulo no puede llamarse `fixtures.luau`:
+`require("./fixtures")` sería ambiguo con el directorio `tests/fixtures/` y el
+intérprete se niega.
+
+`python3` se añade al devshell en vez de heredarlo del perfil de usuario, para
+que la suite no dependa del PATH.
+
+### 24. Traducciones comprobadas en los dos sentidos: `tests/translations.test.luau`
+
+**Problema:** nada garantizaba que `es.json` y `en.json` tuvieran las mismas
+claves, ni que las claves que usan el manifiesto y las entradas existieran. Una
+clave ausente no revienta: el host cae al literal, y el usuario ve
+`panel.refresh` escrito en la interfaz. Fallo silencioso.
+
+**Decisión:** tres comprobaciones — paridad `es` ↔ `en` con valores no vacíos,
+cada `label_key`/`description_key` del manifiesto traducido, y cada
+`noctalia.tr("…")` de las entradas traducido.
+
+### 25. La clave huérfana era el síntoma de un bug real
+
+Al escribir lo anterior, `panel.updatedAgo` («hace {age}») resultó no usarla
+nadie. La causa no era una traducción sobrante, sino esto en `service.luau`:
+
+```lua
+fetchedAtLabel = Logic.formatRelative(fetchedAt, nowMs)
+```
+
+`fetchedAt` está **siempre** en el pasado, y `formatRelative` mira hacia
+adelante: con un delta `<= 0` devuelve `"reiniciando…"`. El pie del panel
+habría dicho «reiniciando…» el 100 % de las veces, tanto con dato fresco como
+con caché — nunca «hace 3 min», que es lo que la propia `MANUAL.md` del plan
+daba como esperado.
+
+**Decisión:** `logic.luau` gana `M.formatAge(pastMs, nowMs)`, pura y probada
+(«3 s», «12 min», «2 h 5 min», «2 d 4 h»), que además satura a cero si el reloj
+va hacia atrás. El servicio la envuelve con `noctalia.tr("panel.updatedAgo",
+{ age = … })`, así que el texto vuelve a ser traducible. Un test deja fijado que
+ninguna clave `panel.*` puede volver a quedarse huérfana sin que alguien mire
+por qué.
+
+### 26. Los tests nuevos se verificaron por mutación
+
+No basta con que un test pase. Se comprobó que **falla cuando debe**: quitando
+una clave de `en.json`, rompiendo `formatAge`, y cambiando la severidad de
+`usage-warning.json`. Las tres mutaciones se detectan.

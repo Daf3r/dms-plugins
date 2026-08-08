@@ -274,6 +274,35 @@ function M.formatRelative(resetsAtMs: number?, nowMs: number): string
   return if restHours > 0 then `en {days} d {restHours} h` else `en {days} d`
 end
 
+-- Antigüedad de un instante PASADO, sin prefijo: "3 s", "12 min", "2 h 5 min".
+--
+-- formatRelative no sirve para esto y usarla es un error silencioso: mira hacia
+-- adelante, y con un delta <= 0 devuelve "reiniciando…". Como fetchedAt está
+-- siempre en el pasado, el pie del panel diría "reiniciando…" el 100 % de las
+-- veces. El texto envolvente ("hace …") lo pone noctalia.tr con la clave
+-- panel.updatedAgo, para que sea traducible.
+function M.formatAge(pastMs: number?, nowMs: number): string
+  if type(pastMs) ~= "number" then return "" end
+
+  -- Un reloj que va hacia atrás (NTP, suspensión) no debe pintar negativos.
+  local delta = math.max(0, nowMs - pastMs)
+
+  if delta < 60000 then return `{math.floor(delta / 1000)} s` end
+
+  local minutes = math.floor(delta / 60000)
+  if minutes < 60 then return `{minutes} min` end
+
+  local hours = math.floor(minutes / 60)
+  local restMinutes = minutes % 60
+  if hours < 24 then
+    return if restMinutes > 0 then `{hours} h {restMinutes} min` else `{hours} h`
+  end
+
+  local days = math.floor(hours / 24)
+  local restHours = hours % 24
+  return if restHours > 0 then `{days} d {restHours} h` else `{days} d`
+end
+
 function M.formatAbsolute(resetsAtMs: number?, nowMs: number): string
   if type(resetsAtMs) ~= "number" then return "" end
 

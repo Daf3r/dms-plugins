@@ -90,8 +90,11 @@ local function publish(status: string, model, source: string?, fetchedAt: number
     hiddenWarning = Logic.hasHiddenWarning(
       model.limits, primary and primary.key or nil, threshold),
     extraUsage = model.extraUsage,
+    -- formatAge, no formatRelative: fetchedAt está en el pasado y
+    -- formatRelative devolvería "reiniciando…" siempre.
     fetchedAtLabel = if fetchedAt
-      then Logic.formatRelative(fetchedAt, nowMs) else nil,
+      then noctalia.tr("panel.updatedAgo", { age = Logic.formatAge(fetchedAt, nowMs) })
+      else nil,
   })
 end
 

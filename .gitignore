@@ -1,3 +1,6 @@
-# Lo genera tests/run.fish en cada ejecución a partir de plugin.toml, porque
-# el intérprete de Luau no tiene `io` con el que leerlo.
+# Los genera tests/run.fish en cada ejecución a partir del manifiesto, de los
+# fixtures y de las traducciones, porque el intérprete de Luau no tiene `io`
+# con el que leerlos ni sabe parsear JSON.
 claude-usage/tests/manifest.fixture.luau
+claude-usage/tests/payloads.fixture.luau
+claude-usage/tests/translations.fixture.luau
