@@ -397,4 +397,67 @@ function M.extractCache(doc: {[string]: any}?): {[string]: any}?
   return { payload = cached.utilization, fetchedAt = fetchedAt }
 end
 
+-- Umbral de aviso por defecto del spec. Un threshold no numérico no debe
+-- interpretarse como "avisar de todo" (equivalente a caer a 0): cae aquí.
+M.DEFAULT_WARN_THRESHOLD = 90
+
+-- Antirrebote: una notificación por ventana. La identidad de la ventana es su
+-- resetsAt, así que reiniciar el shell no vuelve a avisar, y cuando la ventana
+-- se renueva el aviso se rearma solo.
+function M.notificationsFor(limits: {any}, threshold: number?,
+                            prevState: {[string]: any}?,
+                            nowMs: number?): {[string]: any}
+  local notifications = {}
+  local nextState = {}
+
+  if type(limits) ~= "table" then
+    return { notifications = notifications, nextState = nextState }
+  end
+
+  local effectiveThreshold = if type(threshold) == "number" and threshold == threshold
+                             then threshold else M.DEFAULT_WARN_THRESHOLD
+  local previous = if type(prevState) == "table" then prevState else {}
+  local effectiveNow = M.validMs(nowMs)
+
+  for _, limit in limits do
+    if type(limit) ~= "table" then continue end
+
+    local resetsAt = M.validMs(limit.resetsAt)
+    local stamp = if resetsAt then tostring(resetsAt) else nil
+    local before = previous[limit.key]
+    local sameWindow = type(before) == "table" and before.resetsAt == stamp
+
+    if not M.isWarning(limit, effectiveThreshold) then
+      -- Se conserva el registro de la ventana en curso: si vuelve a subir por
+      -- encima del umbral, no se notifica dos veces.
+      nextState[limit.key] = if sameWindow then before
+                             else { resetsAt = stamp, notified = false }
+      continue
+    end
+
+    if sameWindow and before.notified then
+      nextState[limit.key] = before
+      continue
+    end
+
+    -- Sin resetsAt válido o sin un `now` válido no hay forma fiable de
+    -- calcular la cláusula "se reinicia …"; se omite entera en vez de dejar
+    -- un texto colgando.
+    local resetClause = ""
+    if resetsAt and effectiveNow then
+      local absolute = M.formatAbsolute(resetsAt, effectiveNow)
+      if absolute ~= "" then resetClause = ` · se reinicia {absolute}` end
+    end
+
+    table.insert(notifications, {
+      key = limit.key,
+      summary = "Claude",
+      body = `{limit.percent} % de {limit.label} consumido{resetClause}`,
+    })
+    nextState[limit.key] = { resetsAt = stamp, notified = true }
+  end
+
+  return { notifications = notifications, nextState = nextState }
+end
+
 return M

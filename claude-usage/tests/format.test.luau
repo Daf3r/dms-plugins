@@ -2,17 +2,8 @@ local h = require("./harness")
 local Logic = require("../logic")
 
 -- Ancla fija en Europe/Madrid (TZ la pone run.fish): 2026-08-07 09:00 local.
---
--- `os.time` de Luau interpreta su tabla en UTC (timegm), no en hora local, y
--- `formatAbsolute` lee la fecha con `os.date("*t")`, que sí es local. Sin
--- descontar el desfase de la zona, estas anclas irían dos horas movidas en
--- agosto y todo el bloque de formatAbsolute fallaría.
-local function ms(y, mo, d, hh, mm)
-  local asUtc = os.time({ year = y, month = mo, day = d,
-                          hour = hh, min = mm, sec = 0 })
-  local offset = os.time(os.date("*t", asUtc) :: any) - asUtc
-  return (asUtc - offset) * 1000
-end
+-- El porqué de no usar os.time directamente está en h.localMs.
+local ms = h.localMs
 local NOW = ms(2026, 8, 7, 9, 0)
 
 h.describe("entorno", function()

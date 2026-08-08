@@ -58,6 +58,19 @@ function M.nilish(v: any, msg: string?)
   if v ~= nil then error(`{msg or "nilish"}: esperado nil, recibido {tostring(v)}`, 2) end
 end
 
+-- Epoch en ms de una hora de pared LOCAL (la TZ la fija run.fish).
+--
+-- Vive aquí y no en cada fichero de test porque codifica un detalle de Luau
+-- que es fácil volver a equivocar: `os.time` interpreta su tabla en UTC
+-- (timegm), mientras que `os.date("*t")` —que es lo que usa formatAbsolute—
+-- devuelve hora local. En Europe/Madrid y en agosto son dos horas.
+function M.localMs(y: number, mo: number, d: number, hh: number, mm: number): number
+  local asUtc = os.time({ year = y, month = mo, day = d,
+                          hour = hh, min = mm, sec = 0 })
+  local offset = os.time(os.date("*t", asUtc) :: any) - asUtc
+  return (asUtc - offset) * 1000
+end
+
 function M.report(): boolean
   print(`# pass {passed}`)
   print(`# fail {failed}`)
