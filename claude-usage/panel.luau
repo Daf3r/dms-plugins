@@ -10,8 +10,13 @@ local usage = noctalia.state.get("usage")
 -- `runAsync` toma la línea de comando como UNA cadena, no como un array de
 -- argumentos. No hay API de plugin a plugin en noctalia.d.luau, así que el
 -- camino es el propio binario de Noctalia.
+--
+-- La firma es `plugin <author/plugin:entry> <target[:bar-name]> <event>`: el
+-- `all` de en medio es obligatorio y es lo que usan los servicios oficiales
+-- (ver el README de bitwarden). Sin él, `refresh` se lee como target y el
+-- evento se queda sin poner.
 local function requestRefresh()
-  noctalia.runAsync("noctalia msg plugin daf3r/claude-usage:poller refresh")
+  noctalia.runAsync("noctalia msg plugin daf3r/claude-usage:poller all refresh")
 end
 
 local function render()

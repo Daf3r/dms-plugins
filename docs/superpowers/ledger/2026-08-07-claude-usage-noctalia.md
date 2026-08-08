@@ -315,3 +315,46 @@ se quiere.
 
 Se confirmó además que no hay API de plugin a plugin en `noctalia.d.luau`, así
 que pasar por el binario de Noctalia es efectivamente el camino, no un atajo.
+
+### 20. `noctalia msg plugin` lleva un target obligatorio
+
+**Plan:** `noctalia msg plugin daf3r/claude-usage:poller refresh`, tanto en el
+panel como en el paso de verificación de la Task 9.
+
+**Realidad:** la firma es
+`plugin <author/plugin:entry> <target[:bar-name]> <event> [payload]`. Faltaba
+el target: tal cual, `refresh` se lee como target y el evento se queda sin
+poner. Los servicios oficiales usan `all` (README de bitwarden).
+
+**Decisión:** `noctalia msg plugin daf3r/claude-usage:poller all refresh`, en el
+panel y en `tests/MANUAL.md`.
+
+### 21. `run.fish` pasa además el linter de autor de Noctalia
+
+`noctalia plugins lint` es offline y no necesita el shell corriendo. Cruza los
+ajustes declarados en `plugin.toml` contra las llamadas a `getConfig()` de las
+entradas —un ajuste leído pero no declarado es un fallo ruidoso en ejecución— y
+comprueba que cada `entry` apunta a un fichero que existe. Nada de eso lo ve
+`luau-lsp`. Se ejecuta si `noctalia` está en el PATH. Resultado actual: 0
+errores, 0 avisos.
+
+---
+
+## Task 12 — Validación de los siete estados
+
+### 22. La validación queda escrita pero SIN ejecutar
+
+`tests/MANUAL.md` recoge los siete casos con su procedimiento exacto y las
+comprobaciones transversales, pero las columnas «Observado» y «Fecha» están
+vacías: **nadie los ha pasado todavía**.
+
+El motivo es que los casos 2 y 3 apagan la red de la máquina (`nmcli networking
+off`) y los casos 4, 5 y 7 manipulan `~/.claude/.credentials.json`, que es el
+fichero con el que se autentica la sesión de Claude Code desde la que se está
+implementando esto. Son acciones sobre un escritorio en uso, no sobre un banco
+de pruebas.
+
+El symlink de desarrollo sí está puesto
+(`~/.local/state/noctalia/plugins/materialized/daf3r-claude-usage`), que es
+reversible con un `rm`. Habilitar el plugin, añadir el widget a la barra y
+recargar el shell quedan pendientes del usuario.

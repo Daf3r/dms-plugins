@@ -53,6 +53,14 @@ begin
   printf '\n]==] }\n'
 end > $here/manifest.fixture.luau
 
+# Noctalia trae su propio linter de autor, y es offline: cruza los ajustes que
+# declara plugin.toml contra las llamadas a getConfig() de las entradas, y
+# comprueba que cada `entry` apunta a un fichero que existe. Nada de eso lo ve
+# luau-lsp. Solo está si Noctalia está instalado.
+if command -q noctalia
+  noctalia plugins lint $here/..; or set status_total 1
+end
+
 for f in $here/*.test.luau
   luau $f; or set status_total 1
 end
