@@ -52,13 +52,35 @@ h.describe("byCriticality", function()
 end)
 
 h.describe("pickPrimary", function()
-  h.test("solo compite entre primarios", function()
+  -- La sesión gana aunque la semanal vaya más alta Y más grave: es la ventana
+  -- que se recupera esperando, y por eso es la que vive en la barra.
+  h.test("la sesión de 5 h manda sobre la semanal", function()
     local limits = {
       limit("weekly_scoped:Opus", 99, "critical", false),
       limit("session", 42, "normal", true),
       limit("weekly_all", 88, "warning", true),
     }
+    h.eq(Logic.pickPrimary(limits).key, "session")
+  end)
+  -- Si la API deja de mandar la ventana de sesión, se cae al primario más
+  -- grave; el sublímite por modelo sigue sin competir, que es lo de siempre.
+  h.test("sin sesión, cae al primario más grave", function()
+    local limits = {
+      limit("weekly_scoped:Opus", 99, "critical", false),
+      limit("weekly_all", 88, "warning", true),
+    }
     h.eq(Logic.pickPrimary(limits).key, "weekly_all")
+  end)
+  -- Con la sesión fija en la barra, el punto de aviso es la única señal de una
+  -- semanal en rojo. Si esto se rompe, la semanal se vuelve invisible.
+  h.test("una semanal en aviso deja punto aunque la primaria sea la sesión", function()
+    local limits = {
+      limit("session", 10, "normal", true),
+      limit("weekly_all", 95, "warning", true),
+    }
+    local primary = Logic.pickPrimary(limits)
+    h.eq(primary.key, "session")
+    h.eq(Logic.hasHiddenWarning(limits, primary.key, 90), true)
   end)
   h.test("sin primarios devuelve nil", function()
     h.nilish(Logic.pickPrimary({ limit("x", 99, "critical", false) }))

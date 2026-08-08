@@ -227,6 +227,18 @@ end
 -- El widget solo puede codificar dos glifos, así que solo compite entre los
 -- límites primarios. Los sublímites por modelo se señalan con el glifo
 -- indicador (ver hasHiddenWarning).
+-- La ventana de 5 h manda SIEMPRE, aunque la semanal vaya más alta y más grave.
+-- Antes ganaba la de mayor porcentaje, y en la práctica eso era casi siempre la
+-- semanal: la de sesión —la única que se recupera esperando un rato— solo
+-- asomaba por la barra cuando ya iba por delante, que es justo cuando ya no
+-- hacía falta mirarla.
+--
+-- Esto carga de trabajo al punto de aviso: con la sesión fija en la barra, una
+-- semanal al 95 % ya no puede ser la píldora, y hasHiddenWarning es la ÚNICA
+-- señal que queda de ella sin abrir el panel. No quitarlo.
+--
+-- Si la API no manda ventana de sesión, se cae al primario más grave, que es lo
+-- que hacía antes para todos.
 function M.pickPrimary(limits: {any}): any?
   if type(limits) ~= "table" then return nil end
   local primaries = {}
@@ -234,6 +246,11 @@ function M.pickPrimary(limits: {any}): any?
     if type(l) == "table" and l.primary then table.insert(primaries, l) end
   end
   if #primaries == 0 then return nil end
+
+  for _, l in primaries do
+    if l.key == "session" then return l end
+  end
+
   table.sort(primaries, M.byCriticality) -- copia local: no muta la entrada
   return primaries[1]
 end

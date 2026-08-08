@@ -83,9 +83,12 @@ h.describe("fixtures / usage-normal", function()
     h.eq(model.limits[3].primary, false)
   end)
 
-  h.test("el primario es la semanal, por porcentaje", function()
+  -- La sesión es la primaria aunque vaya por debajo (9 % contra 21 %): es la
+  -- ventana que va en la barra, no la que más ha subido.
+  h.test("el primario es la sesión, no la que va más alta", function()
     local primary = Logic.pickPrimary(model.limits)
-    h.eq(primary.key, "weekly_all")
+    h.eq(primary.key, "session")
+    h.eq(primary.percent, 9)
     h.eq(Logic.isWarning(primary, 90), false)
   end)
 
@@ -127,13 +130,34 @@ end)
 h.describe("fixtures / usage-warning", function()
   local model = Logic.normalizeUsage(F["usage-warning"], "api", NOW)
 
-  h.test("la severidad de la API gana al porcentaje de la sesión", function()
+  -- La barra lleva la sesión (42 %, tranquila) mientras la semanal está en
+  -- aviso al 88 %. Ese es el caso que justifica el punto: sin él, la ventana
+  -- que de verdad va mal no deja rastro en la barra.
+  h.test("la semanal en aviso no es la primaria, pero sí deja punto", function()
     local primary = Logic.pickPrimary(model.limits)
-    h.eq(primary.key, "weekly_all")
-    h.eq(primary.percent, 88)
-    h.eq(primary.severity, "warning")
+    h.eq(primary.key, "session")
+    h.eq(Logic.isWarning(primary, 90), false)
+    h.eq(Logic.hasHiddenWarning(model.limits, primary.key, 90), true)
+  end)
+
+  h.test("la severidad de la API gana al porcentaje, en el orden del panel", function()
+    local rest = Logic.sortForPanel(model.limits, "session")
+    h.eq(rest[1].key, "weekly_all")
+    h.eq(rest[1].percent, 88)
+    h.eq(rest[1].severity, "warning")
     -- 88 < 90, así que el aviso viene de la severidad, no del umbral local
-    h.eq(Logic.isWarning(primary, 90), true)
+    h.eq(Logic.isWarning(rest[1], 90), true)
+  end)
+
+  h.test("notifica una sola vez, con el cuerpo completo", function()
+    local r = Logic.notificationsFor(model.limits, 90, {}, NOW)
+    h.eq(#r.notifications, 1)
+    h.eq(r.notifications[1].key, "weekly_all")
+    h.eq(R.render({ key = "notify.bodyWithReset", params = {
+           percent = r.notifications[1].percent,
+           limit = es(r.notifications[1].label),
+           reset = es(r.notifications[1].reset) } }, T.es),
+         "88 % de Semana consumido · se reinicia mañana a las 07:00")
   end)
 
   h.test("el antirrebote aguanta un segundo sondeo idéntico", function()
