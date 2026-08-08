@@ -49,7 +49,31 @@ local function render()
   end
 
   local p = u.primary
+
+  -- "Píldora atenuada" del spec §9 cuando el dato no viene de un sondeo bueno.
+  -- Sin esto, un número servido con la API caída se pinta idéntico a uno
+  -- fresco, que es justo lo que el spec prohíbe: "ningún error deja el widget
+  -- mostrando un número sin marcar su procedencia".
+  --
+  -- El atenuado es SUFIJO ALFA sobre el mismo rol, no un rol distinto. Bajo el
+  -- esquema m3-monochrome, on_surface_variant y secondary dan los dos #C6C6C6
+  -- exactos: atenuar cambiando de rol no pintaba nada. Es propio de los
+  -- esquemas monocromos —  varios roles Material colapsan en el mismo gris —
+  -- y no se puede saber de antemano qué pareja colapsa en el esquema del que
+  -- lo instale. El alfa baja del rol que toque sea cual sea el esquema, y deja
+  -- el hue libre para la severidad: las dos señales siguen siendo ortogonales
+  -- cuando el dato es viejo Y hay aviso.
+  --
+  -- 0.7 y no menos: sobre el fondo de la barra da #949494, que es ~5:1 y pasa
+  -- AA. 0.55 ya se queda en 3.6:1, ilegible de reojo para un número pequeño.
+  --
+  -- Los roles van en snake_case. Un nombre que el host no conoce NO cae al
+  -- color normal: cae a negro, y lo avisa con "unknown color" en el log.
+  local stale = u.status == "stale"
   local role = if p.warning then "error" else "secondary"
+  if stale then
+    role ..= "/0.7"
+  end
   local container = if barWidget.isVertical() then ui.column else ui.row
 
   local children = {
