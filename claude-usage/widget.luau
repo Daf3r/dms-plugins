@@ -1,0 +1,92 @@
+--!nonstrict
+--!nolint FunctionUnused
+-- `onClick` y `update` son globals que llama el host; noctalia.d.luau no las
+-- declara a propósito, así que el linter las lee como código muerto.
+--
+-- [[widget]]: la píldora de barra. Solo pinta lo que el servicio ya decidió
+-- (spec §5). Sin lógica de severidad, sin formateo de fechas.
+--
+-- El anillo del diseño de Caelestia NO es portable: ui.* no tiene arco ni
+-- canvas. La ventana se codifica por GLIFO y la severidad por color, que
+-- mantiene la propiedad que el anillo protegía — los dos canales separados,
+-- así que ambas ventanas siguen distinguiéndose cuando las dos están en rojo.
+
+local usage = noctalia.state.get("usage")
+
+local function render()
+  local u = usage
+
+  -- Ocultarse es setVisible(false), no render(nil): barWidget.render espera un
+  -- árbol, y pasarle nil no es "sin contenido", es un tipo equivocado. Como el
+  -- estado es pegajoso, todos los demás caminos tienen que volver a mostrarlo.
+  if not u or u.status == "missing" then
+    barWidget.setVisible(false) -- se oculta por completo (spec §9)
+    return
+  end
+  barWidget.setVisible(true)
+
+  if u.status == "loading" then
+    barWidget.setGlyph("gauge")
+    barWidget.setText("")
+    barWidget.setTooltip(noctalia.tr("state.loading"))
+    return
+  end
+
+  if u.status == "expired" then
+    barWidget.setGlyph("key-off")
+    barWidget.setText("")
+    barWidget.setTooltip(noctalia.tr("state.expired"))
+    return
+  end
+
+  -- stale con primary nulo = sin conexión y sin dato. Se dice, no se pinta un
+  -- cero (carry-forward de las Tasks 11-13 de Caelestia).
+  if not u.primary then
+    barWidget.setGlyph("cloud-off")
+    barWidget.setText("")
+    barWidget.setTooltip(noctalia.tr("state.offline"))
+    return
+  end
+
+  local p = u.primary
+  local role = if p.warning then "error" else "secondary"
+  local container = if barWidget.isVertical() then ui.column else ui.row
+
+  local children = {
+    ui.glyph({ name = p.glyph, size = 14, color = role }),
+    ui.label({ text = tostring(p.percent), color = role, fontWeight = "bold" }),
+  }
+
+  -- El equivalente al punto de 4 px del original: la única forma de que un
+  -- sublímite por modelo al 95 % no pase desapercibido, dado que el glifo
+  -- solo puede representar dos ventanas.
+  if u.hiddenWarning then
+    table.insert(children, ui.glyph({ name = "alert-circle", size = 9, color = "error" }))
+  end
+
+  barWidget.render(container({
+    gap = 4,
+    align = "center",
+    fill = if p.warning then "error/0.25" else nil,
+    radius = 8,
+    paddingH = 6,
+  }, children))
+
+  barWidget.setTooltip(`{p.label} · {p.percent} % · {p.resetsRel}`)
+end
+
+noctalia.state.watch("usage", function(value)
+  usage = value
+  render()
+end)
+
+-- Un clic alterna el panel. El refresco NO se dispara aquí: lo pide el propio
+-- panel al montarse (spec §5), así que abrir refresca y cerrar no, sin que el
+-- widget tenga que saber en qué estado quedó el panel.
+function onClick()
+  noctalia.togglePanel("daf3r/claude-usage:detail")
+end
+
+function update()
+  render()
+end

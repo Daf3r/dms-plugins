@@ -272,3 +272,46 @@ así que el linter las lee como código muerto.
 `noctalia.json.encode` devuelve `(string?, string?)`. El plan asignaba solo el
 primer valor y lo pasaba directo a `writeFile`, que con `nil` reventaría. Se
 añade la guarda.
+
+---
+
+## Task 10 — El widget de barra
+
+### 18. Ocultarse es `setVisible(false)`, no `render(nil)`
+
+**Plan:** `barWidget.render(nil) -- se oculta por completo (spec §9)`.
+
+**Realidad:** `noctalia.d.luau` declara `render: (tree: UiNode) -> ()`. `nil` no
+es un `UiNode`; `luau-lsp` lo rechaza con «Type 'nil' could not be converted
+into 'UiNode'». La API para esto es `setVisible: (visible: boolean) -> ()`.
+
+**Decisión:** el estado `missing` llama a `barWidget.setVisible(false)`. Como
+la visibilidad es pegajosa, todos los demás caminos de `render()` tienen que
+volver a llamar a `setVisible(true)` — si no, el widget desaparecería para
+siempre en cuanto las credenciales faltasen una vez.
+
+---
+
+## Task 11 — El panel
+
+### 19. `runAsync` recibe una cadena, no un array de argumentos
+
+**Plan:**
+
+```lua
+noctalia.runAsync({ "noctalia", "msg", "plugin",
+                    "daf3r/claude-usage:poller", "refresh" }, function() end)
+```
+
+**Realidad:** la firma es `runAsync: (cmd: string, onResult: ((result:
+CommandResult) -> ())?, timeoutMs: number?) -> boolean`. El primer parámetro es
+la línea de comando completa como una sola cadena; `luau-lsp` lo rechaza con
+«Type '{any}' could not be converted into 'string'». La callback vacía también
+sobra: sin ella, `runAsync` es un lanzamiento desatendido, que es justo lo que
+se quiere.
+
+**Decisión:**
+`noctalia.runAsync("noctalia msg plugin daf3r/claude-usage:poller refresh")`.
+
+Se confirmó además que no hay API de plugin a plugin en `noctalia.d.luau`, así
+que pasar por el binario de Noctalia es efectivamente el camino, no un atajo.
