@@ -2,7 +2,9 @@
 -- [[panel]]: el desglose. Layout P2 del spec §6 — la ventana crítica manda,
 -- el resto en lista fina. Todo el texto llega ya formateado del servicio.
 
-local Logic = require("./logic")
+-- Con extensión: la exige el host. Ver la nota larga en service.luau — el CLI
+-- de luau exige justo lo contrario, y por eso los tests van sin ella.
+local Logic = require("./logic.luau")
 local usage = noctalia.state.get("usage")
 
 -- El refresco se pide al servicio por IPC: el panel no toca la red.

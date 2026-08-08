@@ -425,6 +425,57 @@ va hacia atrás. El servicio la envuelve con `noctalia.tr("panel.updatedAgo",
 ninguna clave `panel.*` puede volver a quedarse huérfana sin que alguien mire
 por qué.
 
+### 26b. Hallazgos del primer arranque en el shell real
+
+Al instalar el plugin en la Noctalia que corre en la máquina aparecieron tres
+cosas que ningún análisis estático podía dar.
+
+**El `require` del host y el del CLI son incompatibles.** El log soltó:
+
+```
+[ERR] plugin daf3r/claude-usage:poller: call to 'chunk' failed:
+      require path must be relative and end in .luau
+```
+
+Noctalia **exige** la extensión; el intérprete `luau` suelto la **rechaza**
+(«could not resolve child component»). No hay una forma que valga para los dos.
+Como los ficheros de entrada solo los carga el host y los de `tests/` solo el
+CLI, cada grupo usa la suya: `service.luau` y `panel.luau` requieren
+`"./logic.luau"`, y los tests siguen con `"../logic"`. Queda comentado en los
+dos sitios porque parece un descuido y no lo es.
+
+**Un symlink en `plugins/materialized/` no registra nada.** Es lo que decía el
+Step 2 de la Task 9 del plan, y el plugin no llegaba ni a aparecer en
+`noctalia msg plugins list`. El registro se construye desde las *fuentes*, y
+los plugins se materializan en `materialized/<fuente>/<plugin>`, no en plano.
+Lo correcto es una fuente de tipo `path`:
+
+```
+noctalia msg plugins source add daf3r path ~/Projects/noctalia-plugins
+```
+
+Efecto secundario a tener en cuenta: al añadir una fuente, Noctalia escribe las
+**tres** en `settings.toml`, incluidas las dos de fábrica. Declarar
+`plugins.source` en nix sin repetir `official` y `community` las borraría, y con
+ellas `noctalia/wallhaven`.
+
+**El id de un widget de plugin en la barra es `author/plugin:entry`.** No está
+documentado en el README del SDK y `noctalia config validate` no valida nombres
+de widget (acepta hasta `meter` a secas), así que se determinó por el log:
+Noctalia registra `widget.daf3r/claude-usage:meter`. La forma correcta aquí es
+`daf3r/claude-usage:meter`.
+
+### 26c. Verificado en vivo
+
+Con el plugin cargado en la Noctalia real: las 3 entradas cargan, el servicio
+arranca, un `refresh` por IPC trae dato de la API de Anthropic y el widget pinta
+glifo + porcentaje en la barra (se observó subir de 45 a 47 entre dos sondeos).
+`grep -ciE 'sk-ant|Bearer [A-Za-z0-9]'` sobre `~/.cache/noctalia/noctalia.log`
+devuelve **0**: el token no se filtra.
+
+Eso cubre por observación directa los casos 1 y 6 de `MANUAL.md`. Los otros
+cinco siguen sin pasar, por lo dicho en la desviación 22.
+
 ### 26. Los tests nuevos se verificaron por mutación
 
 No basta con que un test pase. Se comprobó que **falla cuando debe**: quitando

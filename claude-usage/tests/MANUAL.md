@@ -10,22 +10,30 @@ rellenan al pasarlo.
 
 ## Antes de empezar
 
-**Instalar para desarrollo** (symlink, ya hecho — reversible con `rm`):
+**Ya está declarado en `~/nixos-config/noctalia.nix`** y llega con el próximo
+`sudo nixos-rebuild switch --flake ~/nixos-config`: la fuente local `daf3r`
+(`kind = "path"`), el id en `plugins.enabled`, y el widget dentro del grupo
+`status` de la barra.
+
+> Un symlink a mano en `plugins/materialized/` **no** registra el plugin: el
+> registro se construye a partir de las fuentes, así que sin la entrada
+> `[[plugins.source]]` el plugin no aparece siquiera en
+> `noctalia msg plugins list`. Los plugins se materializan además en
+> `materialized/<fuente>/<plugin>`, no en plano.
+
+Para probar sin rebuild (todo reversible, y escribe en `settings.toml`):
 
 ```bash
-ln -sfn ~/Projects/noctalia-plugins/claude-usage \
-        ~/.local/state/noctalia/plugins/materialized/daf3r-claude-usage
-```
-
-**Habilitar.** `~/.config/noctalia/config.toml` es un symlink de solo lectura al
-store de home-manager; el fichero mutable es `~/.local/state/noctalia/settings.toml`.
-Añadir `"daf3r/claude-usage"` al array `enabled` de `[plugins]` ahí, o bien:
-
-```bash
+noctalia msg plugins source add daf3r path ~/Projects/noctalia-plugins
 noctalia msg plugins enable daf3r/claude-usage
+# …y para deshacerlo:
+noctalia msg plugins disable daf3r/claude-usage
+noctalia msg plugins source remove daf3r
 ```
 
-**Añadir el widget** a la barra desde Ajustes → Bar → Widgets.
+Una fuente `path` vigila el directorio en vivo: tocar `service.luau` o
+`logic.luau` recarga el servicio en caliente, sin rebuild ni reinicio del
+shell.
 
 **Trabajar sobre una copia de `.credentials.json`, nunca sobre el original.**
 

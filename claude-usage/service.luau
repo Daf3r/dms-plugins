@@ -11,7 +11,12 @@
 -- Es headless a propósito: quitar el widget de la barra no debe apagar los
 -- avisos.
 
-local Logic = require("./logic")
+-- CON extensión, y no es un descuido. Noctalia y el intérprete `luau` suelto
+-- exigen formas OPUESTAS: el host rechaza la ruta sin `.luau` ("require path
+-- must be relative and end in .luau") y el CLI rechaza la ruta con ella
+-- ("could not resolve child component"). Este fichero solo lo carga el host;
+-- los de tests/ solo el CLI, y por eso allí van sin extensión.
+local Logic = require("./logic.luau")
 
 local ENDPOINT = "https://api.anthropic.com/api/oauth/usage"
 local CREDENTIALS = "~/.claude/.credentials.json"
