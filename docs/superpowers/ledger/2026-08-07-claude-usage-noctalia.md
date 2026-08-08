@@ -161,3 +161,62 @@ se ejercitaría. `#t` sobre una tabla con hueco tampoco está definido.
 constructor de `state`, que es exactamente lo que el host entregaría. La lista
 de basura conserva el resto y se amplía con `math.huge`, `{}` y `true`. El
 mismo patrón aparece en la Task 6 y se corrige igual.
+
+---
+
+## Task 7 — Notificaciones y antirrebote
+
+### 11. `NOW` y `RESET` son horas locales, y el helper sube al arnés
+
+**Plan:** `local NOW = os.time({...}) * 1000`, igual que en la Task 4.
+
+**Realidad:** el cuerpo esperado de la notificación dice literalmente «se
+reinicia mañana a las 07:00», lo que solo se cumple si el ancla es hora local.
+Misma causa que la desviación 9.
+
+**Decisión:** el helper pasa a ser `h.localMs` en `harness.luau`, y tanto
+`format.test.luau` como `notifications.test.luau` lo usan. Vive ahí porque
+codifica un detalle de Luau —`os.time` es UTC, `os.date("*t")` es local— que
+no debe volver a deducirse en cada fichero.
+
+### 12. El test de «entrada nil en la lista» no ejercitaba nada
+
+**Plan:** `Logic.notificationsFor({ nil, limit(...) })`, para comprobar la
+guarda `if type(limit) ~= "table" then continue end`.
+
+**Realidad:** misma causa que la desviación 10 — el `nil` deja un hueco que la
+iteración se salta, así que la guarda nunca llegaba a ejecutarse.
+
+**Decisión:** la lista lleva valores no-tabla reales (`false`, `"basura"`, `42`)
+delante del límite bueno. Se añaden además dos casos que el plan no cubría: un
+`prevState` que no es tabla, y un `nowMs` inválido (que debe omitir la cláusula
+«se reinicia …» igual que un `resetsAt` ausente).
+
+---
+
+## Task 8 — Manifiesto y traducciones
+
+### 13. El intérprete de Luau no tiene `io`: el test no podía abrir el TOML
+
+**Plan:** el test lee el manifiesto con `io.open("claude-usage/plugin.toml")`.
+
+**Realidad:** el CLI de `luau` está sandboxeado. `io` es `nil` por completo, y
+`os.getenv` tampoco existe, así que un test no puede leer ningún fichero ni
+averiguar dónde está. El test, tal como estaba escrito, no habría llegado ni a
+fallar por la razón prevista: habría reventado en `io.open`.
+
+**Decisión:** `run.fish` empaqueta `plugin.toml` como módulo Luau
+(`tests/manifest.fixture.luau`, un `return { toml = [==[ … ]==] }`) antes de
+lanzar la suite, y el test lo consume con `require`. Las aserciones son las
+mismas que las del plan: el fichero solo cambia de dónde saca el texto. El
+módulo generado está en `.gitignore`.
+
+**Consecuencia:** cualquier test futuro que necesite leer un fichero tendrá que
+pasar por el mismo mecanismo.
+
+### 14. Test añadido: los rangos del manifiesto respetan `MIN_INTERVAL`
+
+El plan comprobaba que los *defaults* del TOML y de `logic.luau` no divergen,
+pero no los *rangos*. Si el `min` de `alert_interval` bajase del
+`MIN_INTERVAL = 15` de la lógica, el usuario podría fijar un valor que
+`nextInterval` recorta en silencio. Un test lo fija.

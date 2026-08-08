@@ -21,6 +21,18 @@ set -l status_total 0
 # luau-analyze lo hace. Sin este paso las anotaciones son decorativas.
 luau-analyze $here/../logic.luau; or set status_total 1
 
+# El intérprete de Luau está sandboxeado: no expone `io` ni `os.getenv`, así
+# que un test no puede abrir plugin.toml por su cuenta. Se empaqueta como
+# módulo para que manifest.test.luau pueda hacerle string matching.
+set -l manifest $here/../plugin.toml
+begin
+  printf 'return { toml = [==[\n'
+  if test -f $manifest
+    cat $manifest
+  end
+  printf '\n]==] }\n'
+end > $here/manifest.fixture.luau
+
 for f in $here/*.test.luau
   luau $f; or set status_total 1
 end

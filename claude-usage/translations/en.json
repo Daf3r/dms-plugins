@@ -1,0 +1,20 @@
+{
+  "title": "Claude",
+  "settings.warn_threshold.label": "Warning threshold",
+  "settings.warn_threshold.description": "Percentage above which a window counts as approaching its limit.",
+  "settings.idle_interval.label": "Idle interval (s)",
+  "settings.idle_interval.description": "How often usage is polled when nothing is near its limit.",
+  "settings.alert_interval.label": "Alert interval (s)",
+  "settings.alert_interval.description": "How often usage is polled while some window is near its limit.",
+  "settings.show_scoped_limits.label": "Show per-model sub-limits",
+  "settings.show_extra_usage.label": "Show extra credits",
+  "settings.show_remaining.label": "Show remaining instead of used",
+  "settings.show_remaining.description": "The bar widget shows what is left rather than what is spent.",
+  "state.loading": "Loading…",
+  "state.offline": "Offline",
+  "state.expired": "Session expired. Open Claude Code to renew it.",
+  "state.cache": "Local cache",
+  "panel.refresh": "Refresh",
+  "panel.extraCredits": "Extra credits",
+  "panel.updatedAgo": "{age} ago"
+}

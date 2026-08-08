@@ -1,0 +1,3 @@
+# Lo genera tests/run.fish en cada ejecución a partir de plugin.toml, porque
+# el intérprete de Luau no tiene `io` con el que leerlo.
+claude-usage/tests/manifest.fixture.luau

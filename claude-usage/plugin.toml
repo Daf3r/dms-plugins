@@ -1,0 +1,89 @@
+# claude-usage — consumo de la suscripción de Claude en la barra de Noctalia.
+# Diseño: docs/superpowers/specs/2026-08-07-claude-usage-noctalia-design.md
+# Sucede al plugin homónimo de Caelestia, bloqueado por un sistema de plugins
+# que nunca se mergeó.
+
+id = "daf3r/claude-usage"
+name = "Claude Usage"
+version = "0.1.0"
+# 3 es el nivel más antiguo que cubre [[widget]], [[panel]], los controles ui.*
+# y barWidget.render. La entrada [[service]] necesita además una build que
+# incluya ese tipo de entrada (Noctalia 5 beta, rev da014f72 o posterior).
+plugin_api = 3
+author = "daf3r"
+license = "MIT"
+icon = "gauge"
+description = "Consumo de la suscripción de Claude: ventana de 5 h y semanal, con avisos."
+dependencies = []
+tags = ["ai", "productivity", "bar", "panel"]
+
+# ── Ajustes (spec §10) ────────────────────────────────────────────────────────
+# Los defaults se repiten en logic.luau (DEFAULT_*). El parser del manifiesto
+# no puede leer Luau, así que la duplicación es inevitable; tests/manifest.test.luau
+# comprueba que no divergen.
+
+[[setting]]
+key = "warn_threshold"
+type = "int"
+label_key = "settings.warn_threshold.label"
+description_key = "settings.warn_threshold.description"
+default = 90
+min = 50
+max = 99
+
+[[setting]]
+key = "idle_interval"
+type = "int"
+label_key = "settings.idle_interval.label"
+description_key = "settings.idle_interval.description"
+default = 300
+min = 60
+max = 3600
+
+[[setting]]
+key = "alert_interval"
+type = "int"
+label_key = "settings.alert_interval.label"
+description_key = "settings.alert_interval.description"
+default = 60
+min = 15
+max = 600
+
+[[setting]]
+key = "show_scoped_limits"
+type = "bool"
+label_key = "settings.show_scoped_limits.label"
+default = true
+
+[[setting]]
+key = "show_extra_usage"
+type = "bool"
+label_key = "settings.show_extra_usage.label"
+default = true
+
+[[setting]]
+key = "show_remaining"
+type = "bool"
+label_key = "settings.show_remaining.label"
+description_key = "settings.show_remaining.description"
+default = false
+
+# ── Entradas ──────────────────────────────────────────────────────────────────
+# El servicio es el único dueño de la red, los ficheros y el temporizador.
+# Es headless a propósito: quitar el widget de la barra no debe apagar los
+# avisos.
+[[service]]
+id = "poller"
+entry = "service.luau"
+
+[[widget]]
+id = "meter"
+entry = "widget.luau"
+
+[[panel]]
+id = "detail"
+entry = "panel.luau"
+width = 340
+height = 420
+placement = "floating"
+position = "center"

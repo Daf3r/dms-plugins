@@ -1,0 +1,20 @@
+{
+  "title": "Claude",
+  "settings.warn_threshold.label": "Umbral de aviso",
+  "settings.warn_threshold.description": "Porcentaje a partir del cual una ventana se considera en aviso.",
+  "settings.idle_interval.label": "Intervalo en reposo (s)",
+  "settings.idle_interval.description": "Cada cuánto se consulta el uso cuando nada está en aviso.",
+  "settings.alert_interval.label": "Intervalo en alerta (s)",
+  "settings.alert_interval.description": "Cada cuánto se consulta cuando alguna ventana está en aviso.",
+  "settings.show_scoped_limits.label": "Mostrar sublímites por modelo",
+  "settings.show_extra_usage.label": "Mostrar créditos extra",
+  "settings.show_remaining.label": "Mostrar restante en vez de consumido",
+  "settings.show_remaining.description": "El widget muestra lo que queda en lugar de lo gastado.",
+  "state.loading": "Cargando…",
+  "state.offline": "Sin conexión",
+  "state.expired": "Sesión caducada. Abre Claude Code para renovarla.",
+  "state.cache": "Caché local",
+  "panel.refresh": "Refrescar",
+  "panel.extraCredits": "Créditos extra",
+  "panel.updatedAgo": "hace {age}"
+}
