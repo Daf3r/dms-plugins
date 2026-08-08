@@ -18,13 +18,37 @@ function M.severityRank(severity: string?): number
   return if rank == nil then 2 else rank
 end
 
-function M.limitLabel(kind: string, scopeName: string?): string
-  if kind == "session" then return "Sesión 5 h" end
-  if kind == "weekly_all" then return "Semana" end
+-- Un DESCRIPTOR, no una cadena: `{ key, params }` para lo traducible y
+-- `{ text }` para lo que no lo es.
+--
+-- logic.luau no puede llamar a noctalia.tr y no es un descuido: los tests lo
+-- cargan con el `luau` suelto, donde el global noctalia no existe. Por eso el
+-- módulo nunca compone texto de cara al usuario — devuelve la clave y quien
+-- tiene host delante (service, panel) la resuelve. El patrón ya estaba en
+-- formatAge, que devuelve "48 s" y deja el "hace …" a panel.updatedAgo; esto
+-- lo extiende al resto.
+-- `params` va como {[string]: any} y no como {[string]: string | number}
+-- porque el índice de tabla es INVARIANTE en Luau: con el tipo estrecho, un
+-- literal `{ model = "Opus" }` deja de encajar y cada descriptor necesitaría un
+-- cast. El valor lo estrecha noctalia.tr, que solo acepta string|number|boolean.
+export type Descriptor = {
+  key: string?,
+  params: { [string]: any }?,
+  weekday: number?,
+  text: string?,
+}
+
+function M.labelDescriptor(kind: string, scopeName: string?): Descriptor
+  if kind == "session" then return { key = "limit.session" } end
+  if kind == "weekly_all" then return { key = "limit.weeklyAll" } end
   if kind == "weekly_scoped" then
-    return if scopeName then `{scopeName} · semanal` else "Sublímite semanal"
+    return if scopeName
+      then { key = "limit.weeklyScoped", params = { model = scopeName } }
+      else { key = "limit.weeklyScopedGeneric" }
   end
-  return kind
+  -- Una clase que no conocemos se pinta cruda antes que traducida a medias: si
+  -- Anthropic añade un `kind`, el usuario ve su nombre y no una clave rota.
+  return { text = kind }
 end
 
 M.PRIMARY_KINDS = { "session", "weekly_all" }
@@ -145,7 +169,7 @@ function M.normalizeUsage(payload: {[string]: any}?, source: string,
       local scopeName = scopeNameOf(item)
       table.insert(result.limits, {
         key = limitKey(item.kind, scopeName),
-        label = M.limitLabel(item.kind, scopeName),
+        label = M.labelDescriptor(item.kind, scopeName),
         percent = math.round(num(item.percent, 0)),
         severity = if type(item.severity) == "string" then item.severity else "normal",
         resetsAt = M.parseIsoMs(item.resets_at),
@@ -164,7 +188,7 @@ function M.normalizeUsage(payload: {[string]: any}?, source: string,
       if type(entry.data) ~= "table" then continue end
       table.insert(result.limits, {
         key = entry.kind,
-        label = M.limitLabel(entry.kind, nil),
+        label = M.labelDescriptor(entry.kind, nil),
         percent = math.round(num(entry.data.utilization, 0)),
         severity = "normal",
         resetsAt = M.parseIsoMs(entry.data.resets_at),
@@ -235,9 +259,6 @@ function M.hasHiddenWarning(limits: {any}, primaryKey: string?,
   return false
 end
 
--- 1-based para casar con os.date("*t").wday, donde 1 = domingo.
-M.WEEKDAYS = { "domingo", "lunes", "martes", "miércoles", "jueves",
-               "viernes", "sábado" }
 M.CURRENCY_SYMBOLS = { USD = "$", EUR = "€" }
 
 local function pad2(n: number): string
@@ -253,43 +274,18 @@ local function startOfDaySec(sec: number): number
                    hour = 0, min = 0, sec = 0 })
 end
 
-function M.formatRelative(resetsAtMs: number?, nowMs: number): string
-  if type(resetsAtMs) ~= "number" then return "" end
-
-  local delta = resetsAtMs - nowMs
-  if delta <= 0 then return "reiniciando…" end
-
-  local minutes = math.floor(delta / 60000)
-  if minutes < 60 then return `en {minutes} min` end
-
-  local hours = math.floor(minutes / 60)
-  local restMinutes = minutes % 60
-  if hours < 24 then
-    return if restMinutes > 0 then `en {hours} h {restMinutes} min`
-           else `en {hours} h`
+-- Cantidad desnuda: "45 min", "2 h 5 min", "1 d 5 h".
+--
+-- Las unidades NO pasan por tr a propósito: s/min/h/d se abrevian igual en las
+-- dos lenguas, y meterlas en el catálogo obligaría a plural y concordancia sin
+-- ganar nada. Lo que sí se traduce es el envoltorio ("en …", "hace …"), que es
+-- donde está la gramática.
+local function durationText(deltaMs: number, withSeconds: boolean): string
+  if withSeconds and deltaMs < 60000 then
+    return `{math.floor(deltaMs / 1000)} s`
   end
 
-  local days = math.floor(hours / 24)
-  local restHours = hours % 24
-  return if restHours > 0 then `en {days} d {restHours} h` else `en {days} d`
-end
-
--- Antigüedad de un instante PASADO, sin prefijo: "3 s", "12 min", "2 h 5 min".
---
--- formatRelative no sirve para esto y usarla es un error silencioso: mira hacia
--- adelante, y con un delta <= 0 devuelve "reiniciando…". Como fetchedAt está
--- siempre en el pasado, el pie del panel diría "reiniciando…" el 100 % de las
--- veces. El texto envolvente ("hace …") lo pone noctalia.tr con la clave
--- panel.updatedAgo, para que sea traducible.
-function M.formatAge(pastMs: number?, nowMs: number): string
-  if type(pastMs) ~= "number" then return "" end
-
-  -- Un reloj que va hacia atrás (NTP, suspensión) no debe pintar negativos.
-  local delta = math.max(0, nowMs - pastMs)
-
-  if delta < 60000 then return `{math.floor(delta / 1000)} s` end
-
-  local minutes = math.floor(delta / 60000)
+  local minutes = math.floor(deltaMs / 60000)
   if minutes < 60 then return `{minutes} min` end
 
   local hours = math.floor(minutes / 60)
@@ -303,25 +299,63 @@ function M.formatAge(pastMs: number?, nowMs: number): string
   return if restHours > 0 then `{days} d {restHours} h` else `{days} d`
 end
 
-function M.formatAbsolute(resetsAtMs: number?, nowMs: number): string
-  if type(resetsAtMs) ~= "number" then return "" end
+function M.describeRelative(resetsAtMs: number?, nowMs: number): Descriptor?
+  if type(resetsAtMs) ~= "number" then return nil end
+
+  local delta = resetsAtMs - nowMs
+  if delta <= 0 then return { key = "state.resetting" } end
+  return { key = "time.in", params = { duration = durationText(delta, false) } }
+end
+
+-- Antigüedad de un instante PASADO, sin prefijo: "3 s", "12 min", "2 h 5 min".
+--
+-- formatRelative no sirve para esto y usarla es un error silencioso: mira hacia
+-- adelante, y con un delta <= 0 devuelve "reiniciando…". Como fetchedAt está
+-- siempre en el pasado, el pie del panel diría "reiniciando…" el 100 % de las
+-- veces. El texto envolvente ("hace …") lo pone noctalia.tr con la clave
+-- panel.updatedAgo, para que sea traducible.
+function M.formatAge(pastMs: number?, nowMs: number): string
+  if type(pastMs) ~= "number" then return "" end
+
+  -- Un reloj que va hacia atrás (NTP, suspensión) no debe pintar negativos.
+  return durationText(math.max(0, nowMs - pastMs), true)
+end
+
+-- El día y el mes viajan SUELTOS, no como "20/8" ya montado: el orden es cosa
+-- de la lengua (en_US pone el mes delante) y solo el patrón de traducción puede
+-- decidirlo. Lo mismo con el día de la semana, que va como índice para que
+-- weekday.N lo nombre.
+function M.describeAbsolute(resetsAtMs: number?, nowMs: number): Descriptor?
+  if type(resetsAtMs) ~= "number" then return nil end
 
   local sec = math.floor(resetsAtMs / 1000)
   local t = os.date("*t", sec) :: any
-  local clock = `a las {pad2(t.hour)}:{pad2(t.min)}`
+  local clock = `{pad2(t.hour)}:{pad2(t.min)}`
 
   local dayDiff = math.round(
     (startOfDaySec(sec) - startOfDaySec(math.floor(nowMs / 1000))) / 86400)
 
-  if dayDiff < 0 then return "" end
-  if dayDiff == 0 then return clock end
-  if dayDiff == 1 then return `mañana {clock}` end
-  if dayDiff < 7 then return `el {M.WEEKDAYS[t.wday]} {clock}` end
-  return `el {t.day}/{t.month} {clock}`
+  if dayDiff < 0 then return nil end
+  if dayDiff == 0 then return { key = "reset.today", params = { clock = clock } } end
+  if dayDiff == 1 then return { key = "reset.tomorrow", params = { clock = clock } } end
+  -- 1-based para casar con os.date("*t").wday, donde 1 = domingo.
+  if dayDiff < 7 then
+    return { key = "reset.weekday", params = { clock = clock }, weekday = t.wday }
+  end
+  return {
+    key = "reset.date",
+    params = { clock = clock, day = t.day, month = t.month },
+  }
 end
 
-function M.formatMoney(amountMinor: number?, exponent: number?,
-                       currency: string?): string
+-- Devuelve las piezas, no el importe montado: el separador decimal y el lado
+-- del símbolo cambian con la lengua ("30,00 $" frente a "$30.00"), así que los
+-- pone format.decimal y format.money. La parte entera y los céntimos salen ya
+-- partidos para que quien traduce no tenga que tocar el número.
+export type Money = { whole: string, cents: string?, symbol: string }
+
+function M.describeMoney(amountMinor: number?, exponent: number?,
+                         currency: string?): Money
   -- Un exponente fraccionario pasa las demás guardas y da un importe raro
   -- (blindaje pedido por el ledger de la Task 5 de Caelestia): ISO 4217 es
   -- siempre entero.
@@ -332,8 +366,12 @@ function M.formatMoney(amountMinor: number?, exponent: number?,
   local value = (if type(amountMinor) == "number" then amountMinor else 0) / (10 ^ exp)
   local symbol = (if currency then M.CURRENCY_SYMBOLS[currency] else nil)
                  or currency or "USD"
+
   local text = string.format(`%.{exp}f`, value)
-  return `{(string.gsub(text, "%.", ","))} {symbol}`
+  local whole, cents = string.match(text, "^(-?%d+)%.(%d+)$")
+  -- Con exponente 0 no hay punto que partir y el importe es entero.
+  if not whole then return { whole = text, cents = nil, symbol = symbol } end
+  return { whole = whole, cents = cents, symbol = symbol }
 end
 
 -- Techo del backoff (dobles por fallo), NO de la base que elige el usuario:
@@ -472,16 +510,17 @@ function M.notificationsFor(limits: {any}, threshold: number?,
     -- Sin resetsAt válido o sin un `now` válido no hay forma fiable de
     -- calcular la cláusula "se reinicia …"; se omite entera en vez de dejar
     -- un texto colgando.
-    local resetClause = ""
+    local reset = nil
     if resetsAt and effectiveNow then
-      local absolute = M.formatAbsolute(resetsAt, effectiveNow)
-      if absolute ~= "" then resetClause = ` · se reinicia {absolute}` end
+      reset = M.describeAbsolute(resetsAt, effectiveNow)
     end
 
+    -- Las piezas, no el cuerpo montado: quien tiene tr delante es el servicio.
     table.insert(notifications, {
       key = limit.key,
-      summary = "Claude",
-      body = `{limit.percent} % de {limit.label} consumido{resetClause}`,
+      percent = limit.percent,
+      label = limit.label,
+      reset = reset,
     })
     nextState[limit.key] = { resetsAt = stamp, notified = true }
   end

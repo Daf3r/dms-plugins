@@ -14,7 +14,33 @@
   "state.offline": "Sin conexión",
   "state.expired": "Sesión caducada. Abre Claude Code para renovarla.",
   "state.cache": "Caché local",
+  "state.resetting": "reiniciando…",
   "panel.refresh": "Refrescar",
   "panel.extraCredits": "Créditos extra",
-  "panel.updatedAgo": "hace {age}"
+  "panel.updatedAgo": "hace {age}",
+
+  "limit.session": "Sesión 5 h",
+  "limit.weeklyAll": "Semana",
+  "limit.weeklyScoped": "{model} · semanal",
+  "limit.weeklyScopedGeneric": "Sublímite semanal",
+
+  "time.in": "en {duration}",
+  "reset.today": "a las {clock}",
+  "reset.tomorrow": "mañana a las {clock}",
+  "reset.weekday": "el {weekday} a las {clock}",
+  "reset.date": "el {day}/{month} a las {clock}",
+
+  "weekday.1": "domingo",
+  "weekday.2": "lunes",
+  "weekday.3": "martes",
+  "weekday.4": "miércoles",
+  "weekday.5": "jueves",
+  "weekday.6": "viernes",
+  "weekday.7": "sábado",
+
+  "format.decimal": ",",
+  "format.money": "{amount} {symbol}",
+
+  "notify.body": "{percent} % de {limit} consumido",
+  "notify.bodyWithReset": "{percent} % de {limit} consumido · se reinicia {reset}"
 }

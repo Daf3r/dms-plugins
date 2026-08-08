@@ -1,5 +1,10 @@
 local h = require("./harness")
 local Logic = require("../logic")
+local R = require("./render")
+local T = require("./translations.fixture")
+
+local function es(desc): string return R.render(desc, T.es) end
+local function en(desc): string return R.render(desc, T.en) end
 
 h.describe("severityRank", function()
   h.test("conoce los tres estados", function()
@@ -13,17 +18,22 @@ h.describe("severityRank", function()
   end)
 end)
 
-h.describe("limitLabel", function()
+h.describe("labelDescriptor", function()
   h.test("etiqueta las tres clases", function()
-    h.eq(Logic.limitLabel("session", nil), "Sesión 5 h")
-    h.eq(Logic.limitLabel("weekly_all", nil), "Semana")
-    h.eq(Logic.limitLabel("weekly_scoped", "Opus"), "Opus · semanal")
+    h.eq(es(Logic.labelDescriptor("session", nil)), "Sesión 5 h")
+    h.eq(en(Logic.labelDescriptor("session", nil)), "5 h session")
+    h.eq(es(Logic.labelDescriptor("weekly_all", nil)), "Semana")
+    h.eq(es(Logic.labelDescriptor("weekly_scoped", "Opus")), "Opus · semanal")
+    h.eq(en(Logic.labelDescriptor("weekly_scoped", "Opus")), "Opus · weekly")
   end)
   h.test("weekly_scoped sin nombre de modelo", function()
-    h.eq(Logic.limitLabel("weekly_scoped", nil), "Sublímite semanal")
+    h.eq(es(Logic.labelDescriptor("weekly_scoped", nil)), "Sublímite semanal")
   end)
+  -- Un kind que no conocemos no tiene clave que traducir: viaja como `text` y
+  -- se pinta crudo, para que el usuario vea el nombre y no una clave rota.
   h.test("un kind desconocido se devuelve tal cual", function()
-    h.eq(Logic.limitLabel("monthly_xyz", nil), "monthly_xyz")
+    h.eq(Logic.labelDescriptor("monthly_xyz", nil).text, "monthly_xyz")
+    h.eq(es(Logic.labelDescriptor("monthly_xyz", nil)), "monthly_xyz")
   end)
 end)
 
@@ -81,7 +91,7 @@ h.describe("normalizeUsage", function()
     h.eq(r.limits[1].percent, 42) -- redondeado
     h.eq(r.limits[1].primary, true)
     h.eq(r.limits[3].key, "weekly_scoped:Opus")
-    h.eq(r.limits[3].label, "Opus · semanal")
+    h.eq(es(r.limits[3].label), "Opus · semanal")
     h.eq(r.limits[3].scope, "Opus")
     h.eq(r.limits[3].primary, false)
   end)

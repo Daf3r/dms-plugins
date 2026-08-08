@@ -14,7 +14,33 @@
   "state.offline": "Offline",
   "state.expired": "Session expired. Open Claude Code to renew it.",
   "state.cache": "Local cache",
+  "state.resetting": "resetting…",
   "panel.refresh": "Refresh",
   "panel.extraCredits": "Extra credits",
-  "panel.updatedAgo": "{age} ago"
+  "panel.updatedAgo": "{age} ago",
+
+  "limit.session": "5 h session",
+  "limit.weeklyAll": "Week",
+  "limit.weeklyScoped": "{model} · weekly",
+  "limit.weeklyScopedGeneric": "Weekly sub-limit",
+
+  "time.in": "in {duration}",
+  "reset.today": "at {clock}",
+  "reset.tomorrow": "tomorrow at {clock}",
+  "reset.weekday": "on {weekday} at {clock}",
+  "reset.date": "on {month}/{day} at {clock}",
+
+  "weekday.1": "Sunday",
+  "weekday.2": "Monday",
+  "weekday.3": "Tuesday",
+  "weekday.4": "Wednesday",
+  "weekday.5": "Thursday",
+  "weekday.6": "Friday",
+  "weekday.7": "Saturday",
+
+  "format.decimal": ".",
+  "format.money": "{symbol}{amount}",
+
+  "notify.body": "{percent} % of {limit} used",
+  "notify.bodyWithReset": "{percent} % of {limit} used · resets {reset}"
 }

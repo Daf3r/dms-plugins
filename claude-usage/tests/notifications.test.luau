@@ -1,5 +1,7 @@
 local h = require("./harness")
 local Logic = require("../logic")
+local R = require("./render")
+local T = require("./translations.fixture")
 
 -- Horas de pared locales: el cuerpo esperado de la notificación las lleva
 -- escritas. Ver h.localMs para por qué no vale os.time a secas.
@@ -7,8 +9,23 @@ local NOW = h.localMs(2026, 8, 7, 9, 0)
 local RESET = h.localMs(2026, 8, 8, 7, 0)
 
 local function limit(key, percent, severity, resetsAt)
-  return { key = key, label = "la ventana semanal", percent = percent,
+  return { key = key, label = { key = "limit.weeklyAll" }, percent = percent,
            severity = severity, resetsAt = resetsAt, scope = nil, primary = true }
+end
+
+-- notificationsFor ya no devuelve el cuerpo montado: devuelve las piezas y es
+-- el servicio quien las pasa por tr. Esto reproduce esa composición para poder
+-- seguir afirmando el texto que de verdad llega a la notificación.
+local function body(n, cat): string
+  local key = if n.reset then "notify.bodyWithReset" else "notify.body"
+  return R.render({
+    key = key,
+    params = {
+      percent = n.percent,
+      limit = R.render(n.label, cat),
+      reset = R.render(n.reset, cat),
+    },
+  }, cat)
 end
 
 h.describe("notificationsFor", function()
@@ -16,9 +33,10 @@ h.describe("notificationsFor", function()
     local r = Logic.notificationsFor({ limit("weekly_all", 90, "normal", RESET) },
                                      90, {}, NOW)
     h.eq(#r.notifications, 1)
-    h.eq(r.notifications[1].summary, "Claude")
-    h.eq(r.notifications[1].body,
-         "90 % de la ventana semanal consumido · se reinicia mañana a las 07:00")
+    h.eq(body(r.notifications[1], T.es),
+         "90 % de Semana consumido · se reinicia mañana a las 07:00")
+    h.eq(body(r.notifications[1], T.en),
+         "90 % of Week used · resets tomorrow at 07:00")
     h.eq(r.nextState["weekly_all"].notified, true)
   end)
 
@@ -63,16 +81,22 @@ h.describe("notificationsFor", function()
     h.eq(#r.notifications, 0) -- 50 < 90; con threshold 0 habría notificado
   end)
 
+  -- Sin cláusula la clave cambia entera (notify.body, no bodyWithReset): son
+  -- dos frases distintas y no una con un trozo pegado, porque dónde encaja el
+  -- "se reinicia …" lo decide la lengua.
   h.test("sin resetsAt válido omite la cláusula entera", function()
     local r = Logic.notificationsFor({ limit("weekly_all", 95, "normal", nil) },
                                      90, {}, NOW)
-    h.eq(r.notifications[1].body, "95 % de la ventana semanal consumido")
+    h.eq(r.notifications[1].reset, nil)
+    h.eq(body(r.notifications[1], T.es), "95 % de Semana consumido")
+    h.eq(body(r.notifications[1], T.en), "95 % of Week used")
   end)
 
   h.test("sin un now válido omite la cláusula entera", function()
     local r = Logic.notificationsFor({ limit("weekly_all", 95, "normal", RESET) },
                                      90, {}, nil)
-    h.eq(r.notifications[1].body, "95 % de la ventana semanal consumido")
+    h.eq(r.notifications[1].reset, nil)
+    h.eq(body(r.notifications[1], T.es), "95 % de Semana consumido")
   end)
 
   h.test("limits que no es tabla devuelve vacío sin lanzar", function()

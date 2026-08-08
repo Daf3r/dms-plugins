@@ -1,5 +1,19 @@
 local h = require("./harness")
 local Logic = require("../logic")
+local R = require("./render")
+local T = require("./translations.fixture")
+
+-- El fixture entra como JSON de la API y sale como el texto que el usuario lee,
+-- en los dos idiomas: es el tramo más largo que se puede probar sin levantar el
+-- shell.
+local function es(desc): string return R.render(desc, T.es) end
+local function en(desc): string return R.render(desc, T.en) end
+
+local function money(m, cat): string
+  local text = if m.cents then `{m.whole}{cat["format.decimal"]}{m.cents}` else m.whole
+  return (string.gsub(string.gsub(cat["format.money"], "{amount}", text),
+                      "{symbol}", m.symbol))
+end
 
 -- Payloads reales de la API, heredados de Caelestia. Llegan como módulo Luau
 -- porque el intérprete no parsea JSON ni tiene `io`; los convierte
@@ -41,11 +55,12 @@ h.describe("fixtures / usage-normal", function()
   h.test("normaliza las tres ventanas con sus etiquetas", function()
     h.eq(#model.limits, 3)
     h.eq(model.limits[1].key, "session")
-    h.eq(model.limits[1].label, "Sesión 5 h")
+    h.eq(es(model.limits[1].label), "Sesión 5 h")
     h.eq(model.limits[2].key, "weekly_all")
-    h.eq(model.limits[2].label, "Semana")
+    h.eq(es(model.limits[2].label), "Semana")
+    h.eq(en(model.limits[2].label), "Week")
     h.eq(model.limits[3].key, "weekly_scoped:Fable")
-    h.eq(model.limits[3].label, "Fable · semanal")
+    h.eq(es(model.limits[3].label), "Fable · semanal")
     h.eq(model.limits[3].scope, "Fable")
   end)
 
@@ -94,18 +109,18 @@ h.describe("fixtures / usage-normal", function()
     h.eq(x.limitMinor, 3000)
     h.eq(x.currency, "USD")
     h.eq(x.disabledReason, "out_of_credits")
-    h.eq(Logic.formatMoney(x.usedMinor, x.exponent, x.currency), "0,00 $")
-    h.eq(Logic.formatMoney(x.limitMinor, x.exponent, x.currency), "30,00 $")
+    h.eq(money(Logic.describeMoney(x.usedMinor, x.exponent, x.currency), T.es), "0,00 $")
+    h.eq(money(Logic.describeMoney(x.limitMinor, x.exponent, x.currency), T.es), "30,00 $")
   end)
 
   h.test("los textos de fecha que verá el usuario", function()
     -- NOW son las 12:00 locales; el reset de sesión, las 19:10 locales.
     local session = model.limits[1]
-    h.eq(Logic.formatAbsolute(session.resetsAt, NOW), "a las 19:10")
-    h.eq(Logic.formatRelative(session.resetsAt, NOW), "en 7 h 10 min")
+    h.eq(es(Logic.describeAbsolute(session.resetsAt, NOW)), "a las 19:10")
+    h.eq(es(Logic.describeRelative(session.resetsAt, NOW)), "en 7 h 10 min")
     local weekly = model.limits[2]
-    h.eq(Logic.formatAbsolute(weekly.resetsAt, NOW), "mañana a las 07:00")
-    h.eq(Logic.formatRelative(weekly.resetsAt, NOW), "en 19 h")
+    h.eq(es(Logic.describeAbsolute(weekly.resetsAt, NOW)), "mañana a las 07:00")
+    h.eq(es(Logic.describeRelative(weekly.resetsAt, NOW)), "en 19 h")
   end)
 end)
 
@@ -119,14 +134,6 @@ h.describe("fixtures / usage-warning", function()
     h.eq(primary.severity, "warning")
     -- 88 < 90, así que el aviso viene de la severidad, no del umbral local
     h.eq(Logic.isWarning(primary, 90), true)
-  end)
-
-  h.test("notifica una sola vez, con el cuerpo completo", function()
-    local r = Logic.notificationsFor(model.limits, 90, {}, NOW)
-    h.eq(#r.notifications, 1)
-    h.eq(r.notifications[1].key, "weekly_all")
-    h.eq(r.notifications[1].body,
-         "88 % de Semana consumido · se reinicia mañana a las 07:00")
   end)
 
   h.test("el antirrebote aguanta un segundo sondeo idéntico", function()
@@ -185,8 +192,8 @@ h.describe("fixtures / usage-credits-on", function()
     h.eq(x.limitMinor, 3000)
     h.eq(x.percent, 25)
     -- lo que el panel pinta en la fila de créditos extra
-    h.eq(Logic.formatMoney(x.usedMinor, x.exponent, x.currency), "7,50 $")
-    h.eq(Logic.formatMoney(x.limitMinor, x.exponent, x.currency), "30,00 $")
+    h.eq(money(Logic.describeMoney(x.usedMinor, x.exponent, x.currency), T.es), "7,50 $")
+    h.eq(money(Logic.describeMoney(x.limitMinor, x.exponent, x.currency), T.es), "30,00 $")
   end)
 
   h.test("un reset con Z pelada también se parsea", function()

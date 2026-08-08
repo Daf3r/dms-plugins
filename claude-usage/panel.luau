@@ -32,6 +32,17 @@ end
 -- flexGrow en vez de anchos en píxeles porque el panel no sabe cuánto mide:
 -- las dos cajas se reparten la fila en proporción y el relleno sale exacto sin
 -- medir nada.
+-- Monta el importe con las piezas que da logic: el separador decimal y el lado
+-- del símbolo son de la lengua, no del número. En es sale "30,00 $" y en en
+-- "$30.00", con el MISMO dato.
+local function money(amountMinor: number?, extra): string
+  local m = Logic.describeMoney(amountMinor, extra.exponent, extra.currency)
+  local amount = if m.cents
+    then `{m.whole}{noctalia.tr("format.decimal")}{m.cents}`
+    else m.whole
+  return noctalia.tr("format.money", { amount = amount, symbol = m.symbol })
+end
+
 local function bar(percent: number, role: string)
   local filled = math.clamp(percent, 0, 100)
   return ui.row({ gap = 0 }, {
@@ -113,7 +124,7 @@ local function render()
     table.insert(rows, ui.row({ gap = 8 }, {
       ui.label({ text = noctalia.tr("panel.extraCredits") }),
       ui.spacer({}),
-      ui.label({ text = `{Logic.formatMoney(extra.usedMinor, extra.exponent, extra.currency)} / {Logic.formatMoney(extra.limitMinor, extra.exponent, extra.currency)}` }),
+      ui.label({ text = `{money(extra.usedMinor, extra)} / {money(extra.limitMinor, extra)}` }),
     }))
   end
 

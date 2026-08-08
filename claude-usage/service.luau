@@ -27,6 +27,25 @@ local inFlight = false
 local notifyState = {}
 local lastModel = nil
 
+-- Resuelve un descriptor de logic.luau contra el catálogo. Es la única frontera
+-- donde el texto de cara al usuario toma forma: logic devuelve claves porque no
+-- puede llamar a tr (los tests lo cargan sin host), y aquí es donde sí se
+-- puede. Un descriptor con `text` es intraducible por naturaleza — el nombre de
+-- un `kind` que no conocemos — y pasa tal cual.
+local function render(desc): string
+  if not desc then return "" end
+  if desc.text then return desc.text end
+
+  local params = desc.params
+  -- El día de la semana es una traducción DENTRO de otra: weekday.N nombra el
+  -- día y reset.weekday lo coloca en la frase.
+  if desc.weekday then
+    params = if params then table.clone(params) else {}
+    params.weekday = noctalia.tr(`weekday.{desc.weekday}`)
+  end
+  return noctalia.tr(desc.key, params)
+end
+
 -- ── Estado persistido del antirrebote ────────────────────────────────────────
 local function stateFilePath(): string?
   local dir = noctalia.pluginDataDir()
@@ -74,11 +93,11 @@ local function publish(status: string, model, source: string?, fetchedAt: number
     if not l then return nil end
     local shown = if showRemaining then 100 - l.percent else l.percent
     return {
-      key = l.key, label = l.label, percent = shown,
+      key = l.key, label = render(l.label), percent = shown,
       warning = Logic.isWarning(l, threshold),
       glyph = if l.key == "session" then "hourglass" else "calendar",
-      resetsRel = Logic.formatRelative(l.resetsAt, nowMs),
-      resetsAbs = Logic.formatAbsolute(l.resetsAt, nowMs),
+      resetsRel = render(Logic.describeRelative(l.resetsAt, nowMs)),
+      resetsAbs = render(Logic.describeAbsolute(l.resetsAt, nowMs)),
     }
   end
 
@@ -222,7 +241,14 @@ local function poll()
 
     local result = Logic.notificationsFor(model.limits, threshold, notifyState, nowMs)
     for _, n in result.notifications do
-      noctalia.notify(n.summary, n.body)
+      -- Dos claves enteras y no una frase + trozo pegado: en la cláusula de
+      -- reinicio la lengua decide dónde va, y concatenar se lo impediría.
+      local body = if n.reset
+        then noctalia.tr("notify.bodyWithReset",
+               { percent = n.percent, limit = render(n.label), reset = render(n.reset) })
+        else noctalia.tr("notify.body",
+               { percent = n.percent, limit = render(n.label) })
+      noctalia.notify(noctalia.tr("title"), body)
     end
     saveNotifyState(result.nextState)
     notifyState = result.nextState
