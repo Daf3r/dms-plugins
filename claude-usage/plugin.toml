@@ -85,6 +85,26 @@ entry = "widget.luau"
 id = "detail"
 entry = "panel.luau"
 width = 340
-height = 420
+# El alto es FIJO y hay que dimensionarlo a mano: no existe alto por contenido.
+# `height = "auto"` se acepta sin protestar y luego se ignora —el panel sale
+# exactamente igual de alto que sin ponerlo—, así que no vale como escape.
+#
+# Y quedarse corto no avisa de ninguna forma. Probado a 200: la fila de créditos
+# sale cortada por la mitad y el pie desaparece entero, sin barra de scroll y
+# sin una línea en el log. Lo primero que se pierde es justo lo que el spec §9
+# protege — de dónde viene el dato y el botón de refrescar—, así que aquí se
+# sobredimensiona a propósito.
+#
+# La cuenta, medida sobre el panel real:
+#   · contenido de hoy, con sus márgenes ....... 292
+#   · cada sublímite por modelo de más ......... +31
+# 360 deja sitio para DOS modelos extra sobre lo que la API devuelve hoy (uno).
+# Si algún día se añade una fila fija al panel, súmale su alto aquí.
+#
+# OJO al tocarlo: la geometría NO se recarga en caliente como los .luau. Hay que
+# re-registrar el plugin para verla:
+#   noctalia msg plugins disable daf3r/claude-usage
+#   noctalia msg plugins enable  daf3r/claude-usage
+height = 360
 placement = "floating"
 position = "center"
