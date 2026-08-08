@@ -5,8 +5,15 @@ solo existen cuando algo del entorno falla, y forzarlos requiere el shell real
 (spec §9). Esta es la lista, con el procedimiento exacto y hueco para anotar lo
 observado.
 
-**Nada de esto está ejecutado todavía.** Las columnas «Observado» y «Fecha» se
-rellenan al pasarlo.
+> **Mientras corre esto, el widget enseña números inventados.** Los casos se
+> fuerzan apuntando `service.luau` a un servidor local, así que durante la
+> validación la barra NO muestra el uso real. Avisar antes de empezar y
+> restaurar el endpoint al terminar.
+
+**Pasada del 2026-08-08 sobre el build con i18n.** Las capturas viven fuera del
+repo (directorio de sesión). El shell corría con `LANG=en_US` y sin idioma
+fijado en `settings.toml`, así que lo observado está en inglés: es la prueba de
+que el texto sale del catálogo y no del código.
 
 ## Antes de empezar
 
@@ -51,13 +58,39 @@ cp ~/.claude/.credentials.json.bak ~/.claude/.credentials.json
 
 | # | Estado | Cómo forzarlo | Esperado | Observado | Fecha |
 |---|---|---|---|---|---|
-| 1 | Dato fresco | Normal, tras un sondeo bueno | Píldora con glifo + número; pie «hace N s» | | |
-| 2 | Sin conexión, con dato | `nmcli networking off` tras un sondeo bueno | Píldora atenuada; «Sin conexión · dato de hace N min» | | |
-| 3 | Sin conexión, sin dato | Red apagada + reiniciar shell, con `~/.claude.json` presente | «Caché local · hace N» | | |
-| 4 | Token vencido | En la copia, poner `claudeAiOauth.expiresAt` en el pasado | Glifo `key-off`; «Sesión caducada» | | |
-| 5 | Sin credenciales | Renombrar `.credentials.json` temporalmente | **Widget oculto por completo** | | |
-| 6 | Arranque | Reiniciar el shell y mirar el primer segundo | «Cargando…» | | |
-| 7 | JSON corrupto | Fichero de credenciales con `{{{` | Igual que «sin conexión», y **sin traza en el log** | | |
+| 1 | Dato fresco | Normal, tras un sondeo bueno | Píldora con glifo + número; pie «hace N s» | ✅ `⏳ 62` a brillo pleno, pico `#D0D0D0` | 2026-08-08 |
+| 2 | Sin conexión, con dato | Servidor de laboratorio en 503 tras un sondeo bueno | Píldora atenuada; «Sin conexión · dato de hace N min» | ✅ Píldora a `#9B9B9B`; pie «Offline · 23 s ago», con el último valor bueno **de memoria** | 2026-08-08 |
+| 3 | Sin conexión, sin dato | Igual, pero recargando el servicio antes para vaciar `lastModel` | «Caché local · hace N» | ✅ Pie «Local cache · 8 h 11 min ago» con los datos del disco (23/11/8) | 2026-08-08 |
+| 4 | Token vencido | En la copia, poner `claudeAiOauth.expiresAt` en el pasado | Glifo `key-off`, sin número | ✅ **tras arreglar el choque `render()`/`setGlyph`** (ver abajo) | 2026-08-08 |
+| 5 | Sin credenciales | Renombrar `.credentials.json` temporalmente | **Widget oculto por completo** | ✅ Desaparece del grupo entero | 2026-08-08 |
+| 6 | Arranque | Endpoint apuntando a un socket que acepta y no responde | Glifo de indicador, sin número | ✅ Solo el glifo `gauge` | 2026-08-08 |
+| 7 | Credenciales ilegibles | Fichero de credenciales con `{{{` | **Widget oculto**, igual que el caso 5, y **sin traza en el log** | ✅ Oculto; cero líneas nuevas en `noctalia.log` | 2026-08-08 |
+| 7b | Respuesta corrupta de la API | Credenciales válidas y cuerpo HTTP 200 que no es JSON | Widget **visible**, atenuado, con el dato de caché | ✅ `⏳ 11` atenuado | 2026-08-08 |
+
+> **La fila 7 estaba mal escrita.** Decía «igual que sin conexión», y lo que
+> ocurre es lo contrario: unas credenciales ilegibles dan `status = "missing"` y
+> el widget se **oculta**, como en el caso 5. Quien cae a «sin conexión» es la
+> fila 7b, que es un caso distinto — credenciales buenas y respuesta rota.
+
+### El defecto que encontró esta pasada
+
+El caso 4 no pasaba: en vez del candado seguía viéndose la píldora anterior. La
+causa está en el log del host, no en la lógica de credenciales:
+
+```
+plugin widget 'daf3r/claude-usage:meter': setText/setGlyph/setImage/setFont/
+setColor have no visible effect while a render() tree is active
+```
+
+Las dos APIs del widget de barra son excluyentes: en cuanto se ha pintado un
+`render()`, los `setGlyph`/`setText` se ignoran. Como la píldora normal usa
+`render()`, los tres estados sin número —cargando, vencido y sin conexión sin
+dato— se quedaban mudos y dejaban en pantalla el árbol anterior. Es decir: un
+dato viejo presentándose como bueno, justo lo que el spec §9 prohíbe. Arreglado
+pasando esos tres estados por `render()` (helper `glyphOnly` en `widget.luau`).
+
+Vale la pena insistir en que **solo se ve corriendo el shell**: no hay test que
+lo pille, porque el conflicto vive en el host.
 
 ## Comprobaciones transversales
 
