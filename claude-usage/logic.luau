@@ -235,4 +235,76 @@ function M.hasHiddenWarning(limits: {any}, primaryKey: string?,
   return false
 end
 
+-- 1-based para casar con os.date("*t").wday, donde 1 = domingo.
+M.WEEKDAYS = { "domingo", "lunes", "martes", "miércoles", "jueves",
+               "viernes", "sábado" }
+M.CURRENCY_SYMBOLS = { USD = "$", EUR = "€" }
+
+local function pad2(n: number): string
+  return if n < 10 then `0{n}` else tostring(n)
+end
+
+-- Las fechas se leen con os.date("*t"), que es hora LOCAL, y se vuelven a
+-- componer con os.time, que en Luau es UTC. La asimetría no importa aquí
+-- porque las dos medianoches se transforman igual y solo se usa su diferencia.
+local function startOfDaySec(sec: number): number
+  local t = os.date("*t", sec) :: any
+  return os.time({ year = t.year, month = t.month, day = t.day,
+                   hour = 0, min = 0, sec = 0 })
+end
+
+function M.formatRelative(resetsAtMs: number?, nowMs: number): string
+  if type(resetsAtMs) ~= "number" then return "" end
+
+  local delta = resetsAtMs - nowMs
+  if delta <= 0 then return "reiniciando…" end
+
+  local minutes = math.floor(delta / 60000)
+  if minutes < 60 then return `en {minutes} min` end
+
+  local hours = math.floor(minutes / 60)
+  local restMinutes = minutes % 60
+  if hours < 24 then
+    return if restMinutes > 0 then `en {hours} h {restMinutes} min`
+           else `en {hours} h`
+  end
+
+  local days = math.floor(hours / 24)
+  local restHours = hours % 24
+  return if restHours > 0 then `en {days} d {restHours} h` else `en {days} d`
+end
+
+function M.formatAbsolute(resetsAtMs: number?, nowMs: number): string
+  if type(resetsAtMs) ~= "number" then return "" end
+
+  local sec = math.floor(resetsAtMs / 1000)
+  local t = os.date("*t", sec) :: any
+  local clock = `a las {pad2(t.hour)}:{pad2(t.min)}`
+
+  local dayDiff = math.round(
+    (startOfDaySec(sec) - startOfDaySec(math.floor(nowMs / 1000))) / 86400)
+
+  if dayDiff < 0 then return "" end
+  if dayDiff == 0 then return clock end
+  if dayDiff == 1 then return `mañana {clock}` end
+  if dayDiff < 7 then return `el {M.WEEKDAYS[t.wday]} {clock}` end
+  return `el {t.day}/{t.month} {clock}`
+end
+
+function M.formatMoney(amountMinor: number?, exponent: number?,
+                       currency: string?): string
+  -- Un exponente fraccionario pasa las demás guardas y da un importe raro
+  -- (blindaje pedido por el ledger de la Task 5 de Caelestia): ISO 4217 es
+  -- siempre entero.
+  local exp = if type(exponent) == "number" and exponent == exponent
+                 and exponent >= 0 and exponent <= 100 and exponent % 1 == 0
+              then exponent else 2
+
+  local value = (if type(amountMinor) == "number" then amountMinor else 0) / (10 ^ exp)
+  local symbol = (if currency then M.CURRENCY_SYMBOLS[currency] else nil)
+                 or currency or "USD"
+  local text = string.format(`%.{exp}f`, value)
+  return `{(string.gsub(text, "%.", ","))} {symbol}`
+end
+
 return M

@@ -1,0 +1,89 @@
+local h = require("./harness")
+local Logic = require("../logic")
+
+-- Ancla fija en Europe/Madrid (TZ la pone run.fish): 2026-08-07 09:00 local.
+--
+-- `os.time` de Luau interpreta su tabla en UTC (timegm), no en hora local, y
+-- `formatAbsolute` lee la fecha con `os.date("*t")`, que sí es local. Sin
+-- descontar el desfase de la zona, estas anclas irían dos horas movidas en
+-- agosto y todo el bloque de formatAbsolute fallaría.
+local function ms(y, mo, d, hh, mm)
+  local asUtc = os.time({ year = y, month = mo, day = d,
+                          hour = hh, min = mm, sec = 0 })
+  local offset = os.time(os.date("*t", asUtc) :: any) - asUtc
+  return (asUtc - offset) * 1000
+end
+local NOW = ms(2026, 8, 7, 9, 0)
+
+h.describe("entorno", function()
+  -- Sin TZ fija, formatAbsolute no es determinista. Si esto falla, el fichero
+  -- se está ejecutando fuera de run.fish.
+  h.test("el lanzador fija TZ=Europe/Madrid", function()
+    local t = os.date("*t", NOW // 1000) :: any
+    h.eq(t.hour, 9, "hora local del ancla")
+    h.eq(t.day, 7, "día local del ancla")
+  end)
+end)
+
+h.describe("formatRelative", function()
+  h.test("menos de una hora", function()
+    h.eq(Logic.formatRelative(NOW + 34 * 60000, NOW), "en 34 min")
+  end)
+  h.test("menos de un día, con y sin minutos sueltos", function()
+    h.eq(Logic.formatRelative(NOW + (10 * 60 + 34) * 60000, NOW), "en 10 h 34 min")
+    h.eq(Logic.formatRelative(NOW + 10 * 3600000, NOW), "en 10 h")
+  end)
+  h.test("más de un día, con y sin horas sueltas", function()
+    h.eq(Logic.formatRelative(NOW + (2 * 24 + 4) * 3600000, NOW), "en 2 d 4 h")
+    h.eq(Logic.formatRelative(NOW + 2 * 24 * 3600000, NOW), "en 2 d")
+  end)
+  h.test("ya vencido", function()
+    h.eq(Logic.formatRelative(NOW - 1000, NOW), "reiniciando…")
+    h.eq(Logic.formatRelative(NOW, NOW), "reiniciando…")
+  end)
+  h.test("sin fecha devuelve cadena vacía", function()
+    h.eq(Logic.formatRelative(nil, NOW), "")
+  end)
+end)
+
+h.describe("formatAbsolute", function()
+  h.test("hoy es solo la hora", function()
+    h.eq(Logic.formatAbsolute(ms(2026, 8, 7, 19, 30), NOW), "a las 19:30")
+  end)
+  h.test("mañana lleva prefijo", function()
+    h.eq(Logic.formatAbsolute(ms(2026, 8, 8, 7, 0), NOW), "mañana a las 07:00")
+  end)
+  h.test("dentro de la semana usa el día", function()
+    -- 2026-08-10 es lunes
+    h.eq(Logic.formatAbsolute(ms(2026, 8, 10, 7, 0), NOW), "el lunes a las 07:00")
+  end)
+  h.test("más allá de una semana usa la fecha", function()
+    h.eq(Logic.formatAbsolute(ms(2026, 8, 20, 7, 0), NOW), "el 20/8 a las 07:00")
+  end)
+  h.test("una fecha pasada devuelve cadena vacía", function()
+    h.eq(Logic.formatAbsolute(ms(2026, 8, 6, 7, 0), NOW), "")
+  end)
+  h.test("sin fecha devuelve cadena vacía", function()
+    h.eq(Logic.formatAbsolute(nil, NOW), "")
+  end)
+end)
+
+h.describe("formatMoney", function()
+  h.test("formatea con coma decimal y símbolo", function()
+    h.eq(Logic.formatMoney(240, 2, "USD"), "2,40 $")
+    h.eq(Logic.formatMoney(3000, 2, "EUR"), "30,00 €")
+  end)
+  h.test("una divisa desconocida usa su propio código", function()
+    h.eq(Logic.formatMoney(100, 2, "GBP"), "1,00 GBP")
+  end)
+  h.test("un exponente inválido cae a 2", function()
+    h.eq(Logic.formatMoney(240, nil, "USD"), "2,40 $")
+    h.eq(Logic.formatMoney(240, -1, "USD"), "2,40 $")
+    h.eq(Logic.formatMoney(240, 2.5, "USD"), "2,40 $") -- blindaje del ledger
+  end)
+  h.test("importe ausente es cero", function()
+    h.eq(Logic.formatMoney(nil, 2, "USD"), "0,00 $")
+  end)
+end)
+
+h.finish()

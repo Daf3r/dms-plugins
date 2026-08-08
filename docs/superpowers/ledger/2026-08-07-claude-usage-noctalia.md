@@ -114,3 +114,32 @@ decorativas. Al ejecutarlo por primera vez apareció un error real: inicializar
 infiriese el campo como `nil` y rechazase la asignación del final. Se corrige
 anotando la tabla como `{[string]: any}` y omitiendo el campo del constructor;
 el comportamiento en ejecución no cambia.
+
+---
+
+## Task 4 — Formateadores
+
+### 9. El helper `ms()` de los tests convierte de hora local a epoch
+
+**Plan:**
+
+```lua
+local function ms(y, mo, d, hh, mm)
+  return os.time({ year = y, month = mo, day = d, hour = hh, min = mm, sec = 0 }) * 1000
+end
+```
+
+**Realidad:** eso construye el epoch **en UTC** (ver desviación 6), mientras que
+`formatAbsolute` lee la fecha con `os.date("*t")`, que es **local**. En
+`TZ=Europe/Madrid` y en agosto son dos horas: `ms(2026, 8, 7, 19, 30)` se
+formatearía como «a las 21:30» y los seis tests del bloque fallarían.
+
+**Decisión:** el helper descuenta el desfase de la zona en ese instante, de modo
+que las anclas del plan siguen leyéndose como hora local de Madrid, que es lo
+que su comentario ya decía. La implementación de `formatAbsolute` no cambia: su
+mezcla de `os.date` local y `os.time` UTC es correcta, porque solo usa la
+*diferencia* entre dos medianoches y ambas sufren la misma transformación.
+
+**Añadido:** un test de entorno que comprueba que el ancla se lee como las 09:00
+del día 7. Si el fichero se ejecuta fuera de `run.fish`, sin `TZ` fija, falla
+ahí en vez de en seis sitios con mensajes de hora incomprensibles.
