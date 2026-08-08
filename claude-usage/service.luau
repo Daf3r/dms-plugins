@@ -119,10 +119,25 @@ end
 -- ledger de la Task 10 observó un aviso disparado por un dato de una hora
 -- antes.
 local function fallbackToCache()
+  -- El valor bueno en memoria manda sobre la caché de disco. El spec §9 los
+  -- distingue en dos filas — "API caída, hay último valor bueno" frente a
+  -- "API caída, SIN valor, hay caché" — y el orden importa de verdad: la
+  -- caché puede ser de hace días, mientras que lastModel es de este arranque.
+  -- Leer el disco primero enseñaba un dato de cuatro horas teniendo uno de
+  -- treinta segundos.
+  --
+  -- lastModel ya lleva dentro su propio source y fetchedAt (los pone
+  -- normalizeUsage), así que la procedencia se conserva y el panel puede decir
+  -- "Sin conexión · hace 8 min" en vez de una antigüedad a secas.
+  if lastModel then
+    publish("stale", lastModel, lastModel.source, lastModel.fetchedAt)
+    return
+  end
+
   local text = noctalia.readFile(CACHE)
   if not text then
-    -- Sin caché: si hay último valor bueno en memoria se muestra atenuado, y
-    -- si no, publish() con model nil hace que la UI diga "Sin conexión".
+    -- Ni memoria ni caché: publish() con model nil hace que la UI diga
+    -- "Sin conexión" en vez de pintar una píldora al 0 %.
     publish("stale", lastModel)
     return
   end

@@ -21,6 +21,26 @@ local function requestRefresh()
   noctalia.runAsync("noctalia msg plugin daf3r/claude-usage:poller all refresh")
 end
 
+-- Barra de progreso a mano, con dos cajas en una fila y `flexGrow`.
+--
+-- `ui.progress` existe y está declarado en noctalia.d.luau, pero en esta build
+-- ignora `value`, `percent` y `color`: se comprobó pintando cinco variantes a
+-- la vez y las cinco salieron idénticas, llenas y blancas. Sin `height` no
+-- aparece siquiera. El plan ya preveía este desenlace y prescribía justamente
+-- ui.box con `fill`.
+--
+-- flexGrow en vez de anchos en píxeles porque el panel no sabe cuánto mide:
+-- las dos cajas se reparten la fila en proporción y el relleno sale exacto sin
+-- medir nada.
+local function bar(percent: number, role: string)
+  local filled = math.clamp(percent, 0, 100)
+  return ui.row({ gap = 0 }, {
+    ui.box({ flexGrow = filled, height = 6, radius = 3, fill = role }),
+    ui.box({ flexGrow = 100 - filled, height = 6, radius = 3,
+             fill = "surface_variant" }),
+  })
+end
+
 local function render()
   local u = usage
 
@@ -42,7 +62,8 @@ local function render()
   if not u.primary then
     panel.render(ui.column({ gap = 8, padding = 16 }, {
       ui.label({ text = noctalia.tr("state.offline") }),
-      ui.button({ label = noctalia.tr("panel.refresh"), onClick = requestRefresh }),
+      -- `text`, no `label`: ui.button ignora `label` y sale una cápsula vacía.
+      ui.button({ text = noctalia.tr("panel.refresh"), onClick = requestRefresh }),
     }))
     return
   end
@@ -59,15 +80,16 @@ local function render()
     ui.label({ text = `{p.percent} %`, fontWeight = "bold",
                color = if p.warning then "error" else nil }),
   }))
-  table.insert(rows, ui.progress({
-    value = p.percent / 100,
-    color = if p.warning then "error" else "primary",
-  }))
+  table.insert(rows, bar(p.percent, if p.warning then "error" else "primary"))
+
+  -- Los roles de color van en snake_case. "onSurfaceVariant" no lo reconoce
+  -- nadie y cae al color por defecto, que es el mismo blanco del texto normal:
+  -- el atenuado desaparece sin que nada falle.
   if p.resetsAbs ~= "" then
     table.insert(rows, ui.label({
-      text = `{p.resetsAbs} · {p.resetsRel}`, color = "onSurfaceVariant" }))
+      text = `{p.resetsAbs} · {p.resetsRel}`, color = "on_surface_variant" }))
   else
-    table.insert(rows, ui.label({ text = p.resetsRel, color = "onSurfaceVariant" }))
+    table.insert(rows, ui.label({ text = p.resetsRel, color = "on_surface_variant" }))
   end
 
   -- 2. Resto de límites.
@@ -95,17 +117,27 @@ local function render()
     }))
   end
 
-  -- 4. Pie.
+  -- 4. Pie: procedencia Y antigüedad.
+  --
+  -- El spec §9 pide "Sin conexión · dato de hace 8 min" y "Caché local · hace
+  -- 4 días": con dato viejo hay que decir POR QUÉ es viejo, no solo cuánto.
+  -- Antes solo se marcaba la caché, así que un dato en memoria servido con la
+  -- API caída se pintaba idéntico a uno fresco salvo por la antigüedad.
+  local marker = ""
+  if u.status == "stale" then
+    marker = if u.source == "cache" then noctalia.tr("state.cache")
+             else noctalia.tr("state.offline")
+  end
+  local age = u.fetchedAtLabel or ""
+  local footer = if marker ~= "" and age ~= "" then `{marker} · {age}`
+                 elseif marker ~= "" then marker
+                 else age
+
   table.insert(rows, ui.separator({}))
   table.insert(rows, ui.row({ gap = 8, align = "center" }, {
-    ui.label({
-      text = if u.source == "cache"
-        then `{noctalia.tr("state.cache")} · {u.fetchedAtLabel or ""}`
-        else (u.fetchedAtLabel or ""),
-      color = "onSurfaceVariant",
-    }),
+    ui.label({ text = footer, color = "on_surface_variant" }),
     ui.spacer({}),
-    ui.button({ label = noctalia.tr("panel.refresh"), glyph = "refresh",
+    ui.button({ text = noctalia.tr("panel.refresh"), glyph = "refresh",
                 variant = "ghost", onClick = requestRefresh }),
   }))
 
