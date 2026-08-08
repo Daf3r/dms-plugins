@@ -1,0 +1,7 @@
+{
+  "five_hour": { "utilization": 42.0, "resets_at": "2026-08-03T17:10:00.330605+00:00" },
+  "seven_day": { "utilization": 88.0, "resets_at": "2026-08-04T05:00:00.330629+00:00" },
+  "limits": [],
+  "extra_usage": null,
+  "spend": null
+}

@@ -1,0 +1,11 @@
+{
+  "limits": [
+    { "kind": "session", "percent": 12, "severity": "normal", "resets_at": "2026-08-03T17:10:00Z", "scope": null }
+  ],
+  "extra_usage": { "is_enabled": true, "monthly_limit": 3000, "used_credits": 7.5, "utilization": 25.0, "currency": "USD", "decimal_places": 2, "disabled_reason": null, "credits_ever_enabled": true },
+  "spend": {
+    "used": { "amount_minor": 750, "currency": "USD", "exponent": 2 },
+    "limit": { "amount_minor": 3000, "currency": "USD", "exponent": 2 },
+    "percent": 25, "enabled": true, "disabled_reason": null
+  }
+}
