@@ -307,4 +307,47 @@ function M.formatMoney(amountMinor: number?, exponent: number?,
   return `{(string.gsub(text, "%.", ","))} {symbol}`
 end
 
+-- Techo del backoff (dobles por fallo), NO de la base que elige el usuario:
+-- idleInterval/alertInterval pueden superarlo (spec §10). El propio backoff
+-- nunca sondea por debajo de la base.
+M.MAX_INTERVAL = 1800
+M.MIN_INTERVAL = 15
+M.DEFAULT_IDLE_INTERVAL = 300
+M.DEFAULT_ALERT_INTERVAL = 60
+
+-- Un valor solo es utilizable como intervalo si es un number finito y
+-- estrictamente positivo. Cualquier otra cosa (nil, NaN, cadenas, 0,
+-- negativos) es entrada basura y cae al default del spec, no al suelo: caer
+-- al suelo sería el sondeo más agresivo posible por culpa de un ajuste roto.
+local function usableInterval(value: any, fallback: number): number
+  if type(value) ~= "number" then return fallback end
+  if value ~= value then return fallback end          -- NaN
+  if value == math.huge or value == -math.huge then return fallback end
+  return if value > 0 then value else fallback
+end
+
+function M.nextInterval(state: {[string]: any}): number
+  local base = if state.warning
+    then usableInterval(state.alertInterval, M.DEFAULT_ALERT_INTERVAL)
+    else usableInterval(state.idleInterval, M.DEFAULT_IDLE_INTERVAL)
+
+  local failures = if type(state.failures) == "number" then state.failures else 0
+
+  if failures > 0 then
+    local doubled = base * (2 ^ failures)
+    -- Dobla hasta el techo, pero nunca por debajo de la base: si la base ya
+    -- supera el techo (p. ej. idleInterval 3600), un fallo no debe hacer el
+    -- sondeo MÁS frecuente que en condiciones normales.
+    return math.max(M.MIN_INTERVAL, base, math.min(doubled, M.MAX_INTERVAL))
+  end
+
+  return math.max(M.MIN_INTERVAL, base)
+end
+
+-- El host trabaja en milisegundos y todo lo de arriba en segundos. Esta es
+-- la ÚNICA conversión del proyecto: si aparece otra, es un bug.
+function M.toMilliseconds(seconds: number): number
+  return seconds * 1000
+end
+
 return M

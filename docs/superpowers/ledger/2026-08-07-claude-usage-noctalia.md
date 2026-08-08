@@ -143,3 +143,21 @@ mezcla de `os.date` local y `os.time` UTC es correcta, porque solo usa la
 **Añadido:** un test de entorno que comprueba que el ancla se lee como las 09:00
 del día 7. Si el fichero se ejecuta fuera de `run.fish`, sin `TZ` fija, falla
 ahí en vez de en seis sitios con mensajes de hora incomprensibles.
+
+---
+
+## Task 5 — Cadencia y backoff
+
+### 10. Un `nil` dentro de un constructor de tabla no se itera
+
+**Plan:** `for _, bad in { nil, 0, -5, 0/0, "300" } :: any do`.
+
+**Realidad:** ese constructor deja el índice 1 vacío. La iteración generalizada
+de Luau recorre la tabla con `next`, que **salta los huecos**, así que el caso
+`nil` —el ajuste sencillamente ausente, que es el más probable de todos— nunca
+se ejercitaría. `#t` sobre una tabla con hueco tampoco está definido.
+
+**Decisión:** el ajuste ausente va en su propio test, omitiendo la clave del
+constructor de `state`, que es exactamente lo que el host entregaría. La lista
+de basura conserva el resto y se amplía con `math.huge`, `{}` y `true`. El
+mismo patrón aparece en la Task 6 y se corrige igual.
