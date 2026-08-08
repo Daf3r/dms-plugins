@@ -178,4 +178,61 @@ function M.normalizeUsage(payload: {[string]: any}?, source: string,
   return result
 end
 
+-- Definición única de "estar cerca del límite". La usan el color del widget,
+-- el glifo indicador, la cadencia de alerta y la notificación.
+function M.isWarning(limit: {[string]: any}?, threshold: number): boolean
+  if type(limit) ~= "table" then return false end
+  return limit.severity ~= "normal" or limit.percent >= threshold
+end
+
+-- Comparador de table.sort: devuelve `true` si `a` va ANTES que `b`.
+--
+-- El tercer criterio (key) no está en el original y es OBLIGATORIO aquí. En
+-- JS, dos elementos con la misma severidad y el mismo porcentaje devolvían 0
+-- y Array.sort, siendo estable, conservaba su orden. table.sort de Luau NO es
+-- estable, y además valida el comparador: uno que diga `true` en ambos
+-- sentidos para el mismo par lanza "invalid order function for sorting". Con
+-- el desempate por key el orden es total, determinista e irreflexivo.
+function M.byCriticality(a: {[string]: any}, b: {[string]: any}): boolean
+  local ra, rb = M.severityRank(a.severity), M.severityRank(b.severity)
+  if ra ~= rb then return ra > rb end
+  if a.percent ~= b.percent then return a.percent > b.percent end
+  return a.key < b.key
+end
+
+-- El widget solo puede codificar dos glifos, así que solo compite entre los
+-- límites primarios. Los sublímites por modelo se señalan con el glifo
+-- indicador (ver hasHiddenWarning).
+function M.pickPrimary(limits: {any}): any?
+  if type(limits) ~= "table" then return nil end
+  local primaries = {}
+  for _, l in limits do
+    if type(l) == "table" and l.primary then table.insert(primaries, l) end
+  end
+  if #primaries == 0 then return nil end
+  table.sort(primaries, M.byCriticality) -- copia local: no muta la entrada
+  return primaries[1]
+end
+
+function M.sortForPanel(limits: {any}, primaryKey: string?): {any}
+  if type(limits) ~= "table" then return {} end
+  local rest = {}
+  for _, l in limits do
+    if type(l) == "table" and l.key ~= primaryKey then table.insert(rest, l) end
+  end
+  table.sort(rest, M.byCriticality)
+  return rest
+end
+
+function M.hasHiddenWarning(limits: {any}, primaryKey: string?,
+                            threshold: number): boolean
+  if type(limits) ~= "table" then return false end
+  for _, l in limits do
+    if type(l) == "table" and l.key ~= primaryKey and M.isWarning(l, threshold) then
+      return true
+    end
+  end
+  return false
+end
+
 return M
