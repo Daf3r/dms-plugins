@@ -102,3 +102,15 @@ El plan avisa de que es la función más frágil del port, y solo cubría el cas
 `Z` y la basura. Se añaden los casos de offset explícito (`+00:00`, `+02:00`,
 `-05:00`), fracción de segundo y offset sin dos puntos (`+0200`). No cambian la
 implementación: ejercitan ramas que el plan ya escribía.
+
+### 8. `run.fish` pasa `luau-analyze` antes de los tests
+
+**Plan:** el lanzador solo ejecuta los `*.test.luau`.
+
+**Motivo del añadido:** `logic.luau` lleva `--!strict`, pero el intérprete no
+comprueba tipos — solo `luau-analyze`. Sin ese paso las anotaciones del plan son
+decorativas. Al ejecutarlo por primera vez apareció un error real: inicializar
+`extraUsage = nil` en el constructor de `normalizeUsage` hacía que Luau
+infiriese el campo como `nil` y rechazase la asignación del final. Se corrige
+anotando la tabla como `{[string]: any}` y omitiendo el campo del constructor;
+el comportamiento en ejecución no cambia.

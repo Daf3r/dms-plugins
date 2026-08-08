@@ -132,8 +132,11 @@ end
 
 function M.normalizeUsage(payload: {[string]: any}?, source: string,
                           fetchedAtMs: number?): {[string]: any}
-  local result = { limits = {}, extraUsage = nil, source = source,
-                   fetchedAt = fetchedAtMs }
+  -- Anotado explícitamente: inicializar `extraUsage = nil` en el constructor
+  -- haría que Luau infiriese el campo como `nil` y rechazase la asignación
+  -- real del final.
+  local result: {[string]: any} = { limits = {}, source = source,
+                                    fetchedAt = fetchedAtMs }
   if type(payload) ~= "table" then return result end
 
   local raw = payload.limits

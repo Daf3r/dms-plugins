@@ -16,6 +16,11 @@ if not command -q luau
 end
 
 set -l status_total 0
+
+# logic.luau lleva --!strict, y el intérprete no comprueba tipos: solo
+# luau-analyze lo hace. Sin este paso las anotaciones son decorativas.
+luau-analyze $here/../logic.luau; or set status_total 1
+
 for f in $here/*.test.luau
   luau $f; or set status_total 1
 end
