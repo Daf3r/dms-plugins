@@ -6,10 +6,11 @@
 id = "daf3r/claude-usage"
 name = "Claude Usage"
 version = "0.1.0"
-# 3 es el nivel más antiguo que cubre [[widget]], [[panel]], los controles ui.*
-# y barWidget.render. La entrada [[service]] necesita además una build que
-# incluya ese tipo de entrada (Noctalia 5 beta, rev da014f72 o posterior).
-plugin_api = 3
+# 3 cubriría [[widget]], [[panel]], [[service]] y los controles ui.*, pero el
+# servicio llama a noctalia.nowMs(), que noctalia.d.luau marca como Plugin API
+# 12: todo el modelo trabaja en epoch de milisegundos y os.time solo da
+# segundos enteros. Declarar 3 y usar una función de nivel 12 sería falso.
+plugin_api = 12
 author = "daf3r"
 license = "MIT"
 icon = "gauge"

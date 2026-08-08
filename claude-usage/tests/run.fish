@@ -21,6 +21,26 @@ set -l status_total 0
 # luau-analyze lo hace. Sin este paso las anotaciones son decorativas.
 luau-analyze $here/../logic.luau; or set status_total 1
 
+# service/widget/panel hablan con globals que inyecta el host, así que para
+# luau-analyze son todo "unknown global". luau-lsp sí acepta el fichero de
+# definiciones del SDK, y con él se comprueban sin levantar el shell. Ese
+# fichero vive fuera del repo (lo instala Noctalia); si no está, se avisa y se
+# siguen comprobando solo la sintaxis, en vez de dar por buenos 600 líneas.
+set -l defs ~/.local/state/noctalia/plugins/sources/official/repo/noctalia.d.luau
+set -l hostFiles
+for name in service widget panel
+  test -f $here/../$name.luau; and set -a hostFiles $here/../$name.luau
+end
+
+if test (count $hostFiles) -gt 0
+  if test -f $defs
+    luau-lsp analyze --definitions=$defs $hostFiles; or set status_total 1
+  else
+    echo "# aviso: sin $defs, solo se comprueba la sintaxis de las entradas del host" >&2
+    luau-compile --binary $hostFiles > /dev/null; or set status_total 1
+  end
+end
+
 # El intérprete de Luau está sandboxeado: no expone `io` ni `os.getenv`, así
 # que un test no puede abrir plugin.toml por su cuenta. Se empaqueta como
 # módulo para que manifest.test.luau pueda hacerle string matching.

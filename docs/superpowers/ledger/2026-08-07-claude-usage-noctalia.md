@@ -220,3 +220,55 @@ El plan comprobaba que los *defaults* del TOML y de `logic.luau` no divergen,
 pero no los *rangos*. Si el `min` de `alert_interval` bajase del
 `MIN_INTERVAL = 15` de la lógica, el usuario podría fijar un valor que
 `nextInterval` recorta en silencio. Un test lo fija.
+
+---
+
+## Task 9 — El servicio
+
+### 15. `plugin_api` sube de 3 a 12
+
+**Plan:** el manifiesto declara `plugin_api = 3`, razonando que es «el nivel más
+antiguo que cubre `[[widget]]`, `[[panel]]`, los controles `ui.*` y
+`barWidget.render`». El servicio, sin embargo, llama a `noctalia.nowMs()`.
+
+**Realidad:** `noctalia.d.luau` marca `nowMs` como **Plugin API 12**. Declarar 3
+y llamarla es una contradicción del propio plan: o el host la niega y el
+servicio revienta, o el manifiesto miente sobre lo que el plugin necesita.
+
+Se comprobó también lo otro que el plan daba por supuesto: `[[service]]` sí
+existe en el nivel 3 (`timer` y `screen_recorder` lo declaran así), y
+`ui.progress`, `ui.separator` y `ui.spacer` están todos en `noctalia.d.luau`
+—los dos primeros riesgos de la auto-revisión del plan quedan descartados—.
+
+**Decisión:** `plugin_api = 12`. La alternativa era sustituir `nowMs` por
+`os.time() * 1000`, que basta en precisión (todo son minutos y márgenes de
+60 s), pero el modelo entero trabaja en milisegundos y `nowMs` es la API hecha
+para eso. El test del manifiesto pasa a exigir `>= 12`.
+
+### 16. Las entradas del host sí se pueden verificar sin levantar el shell
+
+**Plan:** «`service.luau` es pegamento contra APIs del host que no se pueden
+simular sin el shell. Se verifica ejecutando el shell.»
+
+**Realidad:** parcialmente cierto —no se puede *ejecutar*— pero sí se puede
+*comprobar*. Noctalia instala su fichero de definiciones en
+`~/.local/state/noctalia/plugins/sources/official/repo/noctalia.d.luau`, y con
+él las 226 líneas del servicio tipan contra la API real. El `luau-analyze` del
+paquete `luau` no sirve: no tiene `--definitions`, eso es de `luau-lsp`, que se
+añade al devshell.
+
+**Decisión:** `run.fish` comprueba `service.luau`, `widget.luau` y `panel.luau`
+con `luau-lsp analyze --definitions=…`. Si el fichero de definiciones no está
+(otra máquina, Noctalia sin instalar), avisa por stderr y cae a una
+comprobación de sintaxis con `luau-compile`, en vez de dar por buenas
+seiscientas líneas sin mirar.
+
+Los ficheros de entrada llevan `--!nolint FunctionUnused`: `update` y `onIpc`
+son globals que llama el host, y `noctalia.d.luau` no las declara a propósito,
+así que el linter las lee como código muerto.
+
+### 17. `saveNotifyState` no comprobaba el fallo de `encode`
+
+`noctalia.json.encode` devuelve `(string?, string?)`. El plan asignaba solo el
+primer valor y lo pasaba directo a `writeFile`, que con `nil` reventaría. Se
+añade la guarda.

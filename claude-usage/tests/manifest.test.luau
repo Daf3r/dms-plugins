@@ -11,8 +11,13 @@ local Logic = require("../logic")
 local toml = require("./manifest.fixture").toml
 
 h.describe("plugin.toml", function()
-  h.test("declara plugin_api 3", function()
-    h.truthy(string.find(toml, "plugin_api = 3", 1, true))
+  -- 12 y no 3: el servicio llama a noctalia.nowMs(), que noctalia.d.luau
+  -- marca como Plugin API 12. Bajar el nivel sin quitar esa llamada haría que
+  -- el manifiesto mintiera sobre lo que el plugin necesita.
+  h.test("declara al menos plugin_api 12", function()
+    local level = tonumber(string.match(toml, "plugin_api = (%d+)"))
+    h.truthy(level, "no declara plugin_api")
+    h.truthy(level :: number >= 12, `plugin_api = {tostring(level)}, por debajo de nowMs`)
   end)
 
   h.test("las tres entradas están declaradas", function()
