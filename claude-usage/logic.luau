@@ -350,4 +350,51 @@ function M.toMilliseconds(seconds: number): number
   return seconds * 1000
 end
 
+-- Margen para no lanzar una petición con un token que caduca a mitad de vuelo.
+M.TOKEN_MARGIN_MS = 60000
+
+-- Fallar CERRADO: un fichero de credenciales o de caché corrupto o manipulado
+-- no debe interpretarse como válido solo porque una coerción implícita no
+-- lance. Estas guardas devuelven nil ante cualquier cosa que no sea el tipo
+-- esperado.
+function M.validMs(value: any): number?
+  if type(value) ~= "number" then return nil end
+  if value ~= value then return nil end                       -- NaN
+  if value == math.huge or value == -math.huge then return nil end
+  return if value > 0 then value else nil
+end
+
+local function nonEmptyString(value: any): string?
+  return if type(value) == "string" and value ~= "" then value else nil
+end
+
+function M.parseCredentials(doc: {[string]: any}?, nowMs: number): {[string]: any}
+  local invalid = { status = "invalid", token = nil, expiresAt = nil }
+
+  if type(doc) ~= "table" then return invalid end
+  local oauth = doc.claudeAiOauth
+  if type(oauth) ~= "table" then return invalid end
+
+  local token = nonEmptyString(oauth.accessToken)
+  local expiresAtMs = M.validMs(oauth.expiresAt)
+  if not token or not expiresAtMs then return invalid end
+
+  if nowMs > expiresAtMs - M.TOKEN_MARGIN_MS then
+    return { status = "expired", token = nil, expiresAt = expiresAtMs }
+  end
+
+  return { status = "ok", token = token, expiresAt = expiresAtMs }
+end
+
+function M.extractCache(doc: {[string]: any}?): {[string]: any}?
+  if type(doc) ~= "table" then return nil end
+  local cached = doc.cachedUsageUtilization
+  if type(cached) ~= "table" then return nil end
+
+  local fetchedAt = M.validMs(cached.fetchedAtMs)
+  if not fetchedAt or type(cached.utilization) ~= "table" then return nil end
+
+  return { payload = cached.utilization, fetchedAt = fetchedAt }
+end
+
 return M
