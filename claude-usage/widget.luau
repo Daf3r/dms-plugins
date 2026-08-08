@@ -13,6 +13,25 @@
 
 local usage = noctalia.state.get("usage")
 
+local function container()
+  return if barWidget.isVertical() then ui.column else ui.row
+end
+
+-- Los estados sin número son un árbol de un solo glifo, NO setGlyph.
+--
+-- Mezclar las dos APIs no funciona y falla en silencio para el usuario: en
+-- cuanto el widget ha pintado un render(), el host ignora setText/setGlyph y lo
+-- avisa solo en el log ("have no visible effect while a render() tree is
+-- active"). Como la píldora normal usa render(), el token vencido se quedaba
+-- enseñando la píldora anterior en vez del candado — un dato viejo presentado
+-- como bueno, que es justo lo que el spec §9 prohíbe.
+local function glyphOnly(name: string, tooltip: string)
+  barWidget.render(container()({ gap = 4, align = "center", paddingH = 6 }, {
+    ui.glyph({ name = name, size = 14, color = "secondary" }),
+  }))
+  barWidget.setTooltip(tooltip)
+end
+
 local function render()
   local u = usage
 
@@ -26,25 +45,19 @@ local function render()
   barWidget.setVisible(true)
 
   if u.status == "loading" then
-    barWidget.setGlyph("gauge")
-    barWidget.setText("")
-    barWidget.setTooltip(noctalia.tr("state.loading"))
+    glyphOnly("gauge", noctalia.tr("state.loading"))
     return
   end
 
   if u.status == "expired" then
-    barWidget.setGlyph("key-off")
-    barWidget.setText("")
-    barWidget.setTooltip(noctalia.tr("state.expired"))
+    glyphOnly("key-off", noctalia.tr("state.expired"))
     return
   end
 
   -- stale con primary nulo = sin conexión y sin dato. Se dice, no se pinta un
   -- cero (carry-forward de las Tasks 11-13 de Caelestia).
   if not u.primary then
-    barWidget.setGlyph("cloud-off")
-    barWidget.setText("")
-    barWidget.setTooltip(noctalia.tr("state.offline"))
+    glyphOnly("cloud-off", noctalia.tr("state.offline"))
     return
   end
 
@@ -74,8 +87,6 @@ local function render()
   if stale then
     role ..= "/0.7"
   end
-  local container = if barWidget.isVertical() then ui.column else ui.row
-
   local children = {
     ui.glyph({ name = p.glyph, size = 14, color = role }),
     ui.label({ text = tostring(p.percent), color = role, fontWeight = "bold" }),
@@ -88,7 +99,7 @@ local function render()
     table.insert(children, ui.glyph({ name = "alert-circle", size = 9, color = "error" }))
   end
 
-  barWidget.render(container({
+  barWidget.render(container()({
     gap = 4,
     align = "center",
     fill = if p.warning then "error/0.25" else nil,
