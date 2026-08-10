@@ -7,14 +7,23 @@
 // Diferencias respecto del original en Luau:
 //   · los catálogos se cargan de translations/*.json con require, en vez de la
 //     fixture generada tests/translations.fixture.luau;
-//   · el escaneo de las entradas y del manifiesto ya no mira `plugin.toml` ni
-//     los `.luau`: mira los ficheros del PORT (plugin.json y los .qml). Esos
-//     ficheros llegan en las tareas 7 a 12, así que mientras no existan los dos
-//     casos se marcan SKIP con el motivo escrito — visibles en el resumen de
-//     `node --test`, no silenciados — y se activan solos en cuanto aparezcan.
-//     Lo que se busca ya no es `noctalia.tr("…")`: DMS no tiene esa función y
-//     cada entrada resolverá con i18n.render, así que se buscan las claves como
-//     literales, sea cual sea la llamada que las envuelva;
+//   · el escaneo de las entradas ya no mira `plugin.toml` ni los `.luau`: mira
+//     los ficheros del PORT. Lo que se busca ya no es `noctalia.tr("…")`: DMS
+//     no tiene esa función y cada entrada resolverá con i18n.render, así que
+//     se buscan las claves como literales, sea cual sea la llamada que las
+//     envuelva;
+//   · tres casos dependen de ficheros que todavía no existen en todas las
+//     tareas (Widget.qml llega en la 9, Settings.qml en la 12) y se marcan
+//     SKIP con el motivo escrito hasta entonces — visible en el resumen de
+//     `node --test`, no silenciado. RONDA DE ARREGLO 1 (tarea 7): la guarda
+//     original de los tres era "¿existe plugin.json?" / "¿existe algún
+//     .qml?", así que se activaban en cuanto CUALQUIER .qml aparecía — no
+//     cuando el fichero concreto que cada uno necesita existía. El caso de
+//     ajustes además comprobaba el manifiesto por el motivo equivocado: en
+//     DMS los ajustes no van inline en plugin.json (eso era plugin.toml, de
+//     Noctalia), van en Settings.qml con componentes PluginSettings /
+//     settingKey. Los tres quedan corregidos para depender del fichero real
+//     del que depende cada aserción — ver el comentario de cada uno;
 //   · un caso NUEVO al final: que el descriptor no solo tenga clave en el
 //     catálogo, sino que se PINTE. Ver su comentario.
 
@@ -62,7 +71,21 @@ function withExtension(ext) {
 }
 
 var QML_SOURCES = withExtension(".qml");
-var MANIFEST = path.join(PLUGIN_DIR, "plugin.json");
+var WIDGET_QML = path.join(PLUGIN_DIR, "Widget.qml");
+var SETTINGS_QML = path.join(PLUGIN_DIR, "Settings.qml");
+
+// Los seis ajustes de spec §10. La fuente de verdad de esta lista es el
+// propio spec, no logic.js: son los nombres de `settingKey` que Settings.qml
+// tiene que declarar con componentes PluginSettings (StringSetting,
+// ToggleSetting, SliderSetting…), no las constantes DEFAULT_* de la lógica.
+var SPEC_SETTING_KEYS = [
+    "warn_threshold",
+    "idle_interval",
+    "alert_interval",
+    "show_scoped_limits",
+    "show_extra_usage",
+    "show_remaining"
+];
 
 // Un literal con forma de clave de catálogo: o bien "title" a secas, o bien uno
 // de los espacios de nombres seguido de al menos un punto. Exigir el punto evita
@@ -105,35 +128,56 @@ describe("traducciones / paridad", function () {
     });
 });
 
-describe("traducciones / cobertura del manifiesto", function () {
-    // El manifiesto declara los seis ajustes con sus claves de etiqueta y
-    // descripción. Una clave que falte deja la etiqueta de un ajuste mostrando
-    // su propio id.
-    test("cada clave settings.* del manifiesto existe en ambos idiomas", function (t) {
-        if (!fs.existsSync(MANIFEST)) {
-            t.skip("plugin.json todavía no existe (llega en la tarea 7)");
+describe("traducciones / cobertura de los ajustes", function () {
+    // RONDA DE ARREGLO 1 (tarea 7): este caso comprobaba plugin.json porque
+    // así era plugin.toml en Noctalia, con los seis ajustes declarados
+    // inline (`[[setting]] key = "..." label_key = "..."`). El plugin.json
+    // de DMS no lleva esa forma en absoluto — el esquema real
+    // (PLUGINS/plugin-schema.json) solo admite `settings` como RUTA a un
+    // componente QML, sin array de ajustes embebido. Escanear plugin.json
+    // buscando "settings.*.label" siempre iba a encontrar 0 claves: no es
+    // que el caso llegase pronto, es que miraba el fichero equivocado.
+    //
+    // Los seis ajustes viven en Settings.qml (tarea 12), declarados con
+    // componentes PluginSettings y su `settingKey`. Este caso comprueba eso:
+    // que el fichero exista, que declare los seis settingKey del spec §10, y
+    // que la etiqueta de cada uno esté traducida en los dos idiomas.
+    test("Settings.qml declara los seis ajustes del spec y sus etiquetas están traducidas", function (t) {
+        if (!fs.existsSync(SETTINGS_QML)) {
+            t.skip("Settings.qml todavía no existe (llega en la tarea 12)");
             return;
         }
-        var text = fs.readFileSync(MANIFEST, "utf8");
-        var found = 0;
-        keyLiteralsIn(text).forEach(function (key) {
-            if (key.indexOf("settings.") !== 0) return;
-            found += 1;
-            assert.ok(ES[key], 'plugin.json usa "' + key + '", que no está en es.json');
-            assert.ok(EN[key], 'plugin.json usa "' + key + '", que no está en en.json');
+        var text = fs.readFileSync(SETTINGS_QML, "utf8");
+        SPEC_SETTING_KEYS.forEach(function (key) {
+            var settingKeyPattern = new RegExp('settingKey\\s*:\\s*["\']' + key + '["\']');
+            assert.ok(settingKeyPattern.test(text),
+                      'Settings.qml no declara settingKey "' + key + '"');
+
+            var labelKey = "settings." + key + ".label";
+            assert.ok(ES[labelKey], 'falta "' + labelKey + '" en es.json');
+            assert.ok(EN[labelKey], 'falta "' + labelKey + '" en en.json');
         });
-        assert.ok(found >= 6,
-                  "solo " + found + " claves en el manifiesto, se esperaban >= 6");
     });
 });
 
 describe("traducciones / cobertura de las entradas", function () {
-    // Cierra el círculo por el otro lado: cada clave escrita en el daemon, el
-    // widget o el panel tiene que estar traducida. Sin esto, una clave mal
-    // escrita solo se descubre viéndola en pantalla.
+    // RONDA DE ARREGLO 1 (tarea 7): la guarda original era "¿existe algún
+    // .qml?" (QML_SOURCES.length === 0), así que Daemon.qml —que no pinta ni
+    // una sola clave, a propósito, porque el daemon mínimo solo loguea—
+    // bastaba para sacar estos dos casos de SKIP y hacerlos fallar por
+    // encontrar 0 claves. Cada caso pasa ahora a depender del fichero
+    // concreto del que depende su aserción, no de "cualquier .qml".
+    //
+    // Este caso barre TODOS los ficheros .qml del plugin (daemon, widget,
+    // ajustes) buscando cada clave usada, así que solo tiene sentido pasarlo
+    // cuando el círculo está completo: Widget.qml aporta la mayoría de
+    // claves (panel.*, state.*, limit.*…) pero Settings.qml aporta las
+    // settings.*.label — sin ese último fichero la comprobación sería
+    // parcial y daría un verde que no es tal. Se guarda tras Settings.qml,
+    // la última pieza en llegar (tarea 12).
     test("cada clave usada en los .qml está traducida", function (t) {
-        if (QML_SOURCES.length === 0) {
-            t.skip("no hay .qml todavía (llegan en las tareas 8 a 12)");
+        if (!fs.existsSync(SETTINGS_QML)) {
+            t.skip("Settings.qml todavía no existe (llega en la tarea 12); hasta entonces el barrido de .qml está incompleto");
             return;
         }
         var found = 0;
@@ -152,9 +196,13 @@ describe("traducciones / cobertura de las entradas", function () {
     // síntoma de un bug: el servicio formateaba fetchedAt con formatRelative,
     // que mira hacia adelante y devolvía "reiniciando…" siempre. No volver a
     // dejar claves huérfanas sin mirar por qué lo son.
+    //
+    // Las claves panel.* se usan en Widget.qml (panel.luau se fusionó ahí,
+    // según el mapa de ficheros de la tarea 7), así que su fichero real es
+    // Widget.qml (tarea 9), no Settings.qml.
     test("ninguna clave de panel.* queda sin usar", function (t) {
-        if (QML_SOURCES.length === 0) {
-            t.skip("no hay .qml todavía (llegan en las tareas 8 a 12)");
+        if (!fs.existsSync(WIDGET_QML)) {
+            t.skip("Widget.qml todavía no existe (llega en la tarea 9)");
             return;
         }
         var used = {};
