@@ -39,6 +39,11 @@ en un `PluginGlobalVar`; `Widget.qml` lo lee y solo pinta. `logic.js` devuelve
   sigue siendo válido para comparar contra el original. El nuevo es `tests/run-js.fish`,
   que fija `TZ=Europe/Madrid` y pasa el glob de ficheros, porque `node --test <dir>` falla
   con `MODULE_NOT_FOUND` en node v26.4.0.
+- **El runner de Luau necesita un rodeo.** `tests/run.fish` invoca el devshell
+  `noctalia-plugins`, que se renombró a `dms-plugins` y perdió `luau` el 2026-08-10.
+  Mientras los `.luau` sigan siendo la referencia (hasta la tarea 13), córrelos con
+  `nix shell nixpkgs#luau --command fish claude-usage/tests/run.fish`. Sirve para
+  contrastar el port contra el original.
 - **Los pasos marcados 🖐️ los verifica daf3r**, no el subagente: requieren GUI o juicio
   visual. Al llegar a uno, commitea, ponlo en el informe y **para**.
 - **Entra al devshell:** `nix develop ~/nixos-config#dms-plugins`.
