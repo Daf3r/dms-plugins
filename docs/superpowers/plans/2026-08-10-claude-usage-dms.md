@@ -144,7 +144,8 @@ PluginComponent {
 - [ ] **Paso 3: 🖐️ Cargar el plugin y observar** (verifica daf3r)
 
 ```bash
-dms ipc plugins rescan
+dms ipc plugin-scan scan
+sleep 3   # el listado va con debounce: sin esperar devuelve count=0
 dms ipc plugins enable spikeHttp
 ```
 
@@ -314,7 +315,8 @@ PluginComponent {
 
 ```bash
 ln -sfn ~/Projects/dms-plugins/claude-usage ~/.config/DankMaterialShell/plugins/claude-usage
-dms ipc plugins rescan
+dms ipc plugin-scan scan
+sleep 3   # el listado va con debounce: sin esperar devuelve count=0
 dms ipc plugins list
 ```
 
