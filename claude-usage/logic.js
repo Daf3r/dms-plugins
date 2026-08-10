@@ -27,10 +27,16 @@
 // queda reservado a "esta propiedad no existe".
 //
 // TRADUCCIÓN: este fichero cubre los helpers puros de formato (tarea 3 del
-// plan) y la normalización del payload más el orden del panel (tarea 4). El
-// resto de logic.luau — nextInterval, parseCredentials, notificationsFor… —
-// llega en tareas posteriores. Hasta entonces logic.luau sigue siendo la
-// fuente y no se borra.
+// plan), la normalización del payload más el orden del panel (tarea 4) y la
+// cadencia, las credenciales y las notificaciones (tarea 5). Con eso está
+// traducido logic.luau entero; el .luau sigue siendo la fuente de contraste y
+// no se borra hasta la última tarea.
+//
+// La ÚNICA pieza que no viene de logic.luau es parseRetryAfter (más
+// clampInterval y la rama de retryAfter de nextInterval, que existen para
+// aplicarla). Viaja al revés: el port a Noctalia la eliminó porque su API HTTP
+// no exponía cabeceras de respuesta, y en DMS sí se leen
+// (XMLHttpRequest.getResponseHeader). Se recupera del árbol de Caelestia.
 
 // ---------------------------------------------------------------------------
 // Guardas de tipo
@@ -529,6 +535,243 @@ function hasHiddenWarning(limits, primaryKey, threshold) {
     return false;
 }
 
+// ---------------------------------------------------------------------------
+// Cadencia de sondeo
+// ---------------------------------------------------------------------------
+
+// Techo del backoff (dobles por fallo) y de Retry-After, NO de la base que
+// elige el usuario: idleInterval/alertInterval pueden superarlo (spec §10). El
+// propio backoff nunca sondea por debajo de la base.
+var MAX_INTERVAL = 1800;
+var MIN_INTERVAL = 15;
+var DEFAULT_IDLE_INTERVAL = 300;
+var DEFAULT_ALERT_INTERVAL = 60;
+
+// Solo se aplica a un valor YA validado (ver usableInterval y la guarda de
+// retryAfter en nextInterval): `clampInterval(NaN)` daría NaN y el
+// temporizador de QML dejaría de disparar, y `clampInterval(0)` daría el
+// suelo, que es el sondeo más agresivo posible.
+function clampInterval(seconds) {
+    return Math.max(MIN_INTERVAL, Math.min(MAX_INTERVAL, seconds));
+}
+
+// Un valor solo es utilizable como intervalo si es un number finito y
+// estrictamente positivo. Cualquier otra cosa (ausente, NaN, cadenas, 0,
+// negativos) es entrada basura y cae al default del spec, no al suelo: caer al
+// suelo sería el sondeo más agresivo posible por culpa de un ajuste roto.
+function usableInterval(value, fallback) {
+    if (typeof value !== "number") return fallback;
+    if (value !== value) return fallback;                // NaN
+    if (value === Infinity || value === -Infinity) return fallback;
+    return value > 0 ? value : fallback;
+}
+
+function nextInterval(state) {
+    // Retry-After manda: si el servidor pide esperar, se espera. Un
+    // Retry-After no numérico, no finito o no positivo no cuenta como tal y se
+    // sigue el camino normal (reposo/alerta + backoff) en vez de tratarlo como
+    // 0. Esta rama no está en logic.luau: vuelve con parseRetryAfter.
+    if (typeof state.retryAfter === "number" && state.retryAfter === state.retryAfter
+        && state.retryAfter !== Infinity && state.retryAfter > 0) {
+        return clampInterval(state.retryAfter);
+    }
+
+    // `if state.warning then` del original. En Lua el 0 y la cadena vacía son
+    // TRUTHY, así que un `state.warning ? …` aquí no sería el mismo programa;
+    // luaTruthy conserva la semántica exacta (ver su comentario).
+    var base = luaTruthy(state.warning)
+        ? usableInterval(state.alertInterval, DEFAULT_ALERT_INTERVAL)
+        : usableInterval(state.idleInterval, DEFAULT_IDLE_INTERVAL);
+
+    var failures = typeof state.failures === "number" ? state.failures : 0;
+
+    if (failures > 0) {
+        var doubled = base * Math.pow(2, failures);
+        // Dobla hasta el techo, pero nunca por debajo de la base: si la base ya
+        // supera el techo (p. ej. idleInterval 3600), un fallo no debe hacer el
+        // sondeo MÁS frecuente que en condiciones normales.
+        return Math.max(MIN_INTERVAL, Math.max(base, Math.min(doubled, MAX_INTERVAL)));
+    }
+
+    // Sin fallos, la base del usuario se respeta íntegra; solo el suelo puede
+    // recortarla, nunca el techo del backoff.
+    return Math.max(MIN_INTERVAL, base);
+}
+
+var DELTA_SECONDS_PATTERN = /^[0-9]+$/;
+
+// RFC 7231 §7.1.3 permite dos formas para Retry-After: delta-seconds ("120") y
+// fecha HTTP ("Wed, 21 Oct 2015 07:28:00 GMT"). `parseInt(header, 10) || 0`
+// solo entiende la primera: ante la forma de fecha da NaN y el `|| 0` lo
+// convierte en "reintenta ya", justo lo contrario de lo que pide un 429. Aquí
+// se prueban las dos; si ninguna parsea, o el resultado es negativo o no
+// finito, se devuelve 0 para que tome el mando el backoff propio del plugin
+// (el que corre por `failures`, ver nextInterval) en vez de un reintento
+// inmediato.
+//
+// `now` es un epoch en MILISEGUNDOS, no un Date: es el contrato de fechas de
+// todo el módulo. En Caelestia era un Date, y esa es la única adaptación.
+//
+// La forma de fecha se resuelve con Date.parse y no con una expresión regular
+// propia. Es la excepción a la regla de parseIsoMs (que evita el parseo de
+// cadenas de Date por ser dependiente del motor) y se admite porque
+// IMF-fixdate es una gramática fija que V4 y V8 reconocen igual, y porque un
+// motor que NO la reconociera devolvería NaN y con él un 0: el plugin se
+// quedaría con su propio backoff, que es exactamente el modo degradado
+// correcto.
+function parseRetryAfter(header, nowMs) {
+    if (typeof header !== "string" || header.length === 0) return 0;
+    if (validMs(nowMs) === null) return 0;
+
+    var trimmed = header.trim();
+
+    // Delta-seconds: RFC 7231 lo define como 1*DIGIT, sin signo ni decimales.
+    if (DELTA_SECONDS_PATTERN.test(trimmed)) {
+        var seconds = parseInt(trimmed, 10);
+        return (seconds === seconds && seconds !== Infinity && seconds >= 0) ? seconds : 0;
+    }
+
+    // Forma de fecha HTTP: la diferencia con `now` son los segundos a esperar.
+    var whenMs = Date.parse(trimmed);
+    if (whenMs !== whenMs || whenMs === Infinity || whenMs === -Infinity) return 0;
+
+    var diffSeconds = round((whenMs - nowMs) / 1000);
+    return diffSeconds > 0 ? diffSeconds : 0;
+}
+
+// ---------------------------------------------------------------------------
+// Credenciales y caché
+// ---------------------------------------------------------------------------
+
+// Margen para no lanzar una petición con un token que caduca a mitad de vuelo.
+var TOKEN_MARGIN_MS = 60000;
+
+function nonEmptyString(value) {
+    return (typeof value === "string" && value !== "") ? value : null;
+}
+
+// El decode que en logic.luau hacía el servicio (allí parseCredentials recibía
+// la tabla ya decodificada, de ahí su caso "nil = decode fallido"). Devolver
+// null en vez de lanzar es lo que convierte un fichero corrupto en ese caso.
+//
+// Solo acepta cadenas: `JSON.parse(true)` devolvería `true` sin lanzar, y
+// dejar pasar eso contradiría el fallar-cerrado del resto del módulo.
+function safeParse(text) {
+    if (typeof text !== "string" || text === "") return null;
+    try {
+        return JSON.parse(text);
+    } catch (e) {
+        return null;
+    }
+}
+
+// El token NO viaja en la forma inválida ni en la caducada: `token` es null,
+// no la cadena. Falla CERRADO — los tres hallazgos de seguridad de la Task 7
+// de Caelestia.
+function parseCredentials(doc, nowMs) {
+    var invalid = { status: "invalid", token: null, expiresAt: null };
+
+    if (!isTable(doc)) return invalid;
+    var oauth = doc.claudeAiOauth;
+    if (!isTable(oauth)) return invalid;
+
+    var token = nonEmptyString(oauth.accessToken);
+    var expiresAtMs = validMs(oauth.expiresAt);
+    if (token === null || expiresAtMs === null) return invalid;
+
+    if (nowMs > expiresAtMs - TOKEN_MARGIN_MS)
+        return { status: "expired", token: null, expiresAt: expiresAtMs };
+
+    return { status: "ok", token: token, expiresAt: expiresAtMs };
+}
+
+function extractCache(doc) {
+    if (!isTable(doc)) return null;
+    var cached = doc.cachedUsageUtilization;
+    if (!isTable(cached)) return null;
+
+    var fetchedAt = validMs(cached.fetchedAtMs);
+    if (fetchedAt === null || !isTable(cached.utilization)) return null;
+
+    return { payload: cached.utilization, fetchedAt: fetchedAt };
+}
+
+// ---------------------------------------------------------------------------
+// Notificaciones
+// ---------------------------------------------------------------------------
+
+// Umbral de aviso por defecto del spec. Un threshold no numérico no debe
+// interpretarse como "avisar de todo" (equivalente a caer a 0): cae aquí.
+var DEFAULT_WARN_THRESHOLD = 90;
+
+// Antirrebote: una notificación por ventana. La identidad de la ventana es su
+// resetsAt, así que reiniciar el shell no vuelve a avisar, y cuando la ventana
+// se renueva el aviso se rearma solo.
+//
+// Esto es lógica PURA y vive solo aquí: no se replica en Daemon.qml ni se
+// simplifica. El estado entra por `prevState` y sale por `nextState`.
+function notificationsFor(limits, threshold, prevState, nowMs) {
+    var notifications = [];
+    var nextState = {};
+
+    if (!isTable(limits)) return { notifications: notifications, nextState: nextState };
+
+    // `threshold == threshold` descarta NaN y nada más: un 0 explícito es un
+    // umbral válido y NO debe caer al default (un `threshold || DEFAULT` sí lo
+    // haría).
+    var effectiveThreshold = (typeof threshold === "number" && threshold === threshold)
+        ? threshold : DEFAULT_WARN_THRESHOLD;
+    var previous = isTable(prevState) ? prevState : {};
+    var effectiveNow = validMs(nowMs);
+
+    // El original recorre con `for _, limit in limits`, la iteración
+    // generalizada de una tabla-lista. Aquí el contrato es un array y el
+    // recorrido es por índice desde 0 (en Luau empieza en 1).
+    for (var i = 0; i < limits.length; i++) {
+        var limit = limits[i];
+        if (!isTable(limit)) continue;
+
+        var resetsAt = validMs(limit.resetsAt);
+        // La marca de ventana es texto para que la comparación no dependa de
+        // la aritmética en coma flotante, igual que el tostring del original.
+        var stamp = resetsAt === null ? null : String(resetsAt);
+        var before = previous[limit.key];
+        var sameWindow = isTable(before) && before.resetsAt === stamp;
+
+        if (!isWarning(limit, effectiveThreshold)) {
+            // Se conserva el registro de la ventana en curso: si vuelve a
+            // subir por encima del umbral, no se notifica dos veces.
+            nextState[limit.key] = sameWindow ? before
+                : { resetsAt: stamp, notified: false };
+            continue;
+        }
+
+        if (sameWindow && before.notified) {
+            nextState[limit.key] = before;
+            continue;
+        }
+
+        // Sin resetsAt válido o sin un `now` válido no hay forma fiable de
+        // calcular la cláusula "se reinicia …"; se omite entera en vez de
+        // dejar un texto colgando. Ausencia = null, nunca propiedad ausente.
+        var reset = null;
+        if (resetsAt !== null && effectiveNow !== null)
+            reset = describeAbsolute(resetsAt, effectiveNow);
+
+        // Las piezas, no el cuerpo montado: quien tiene el catálogo delante es
+        // el servicio.
+        notifications.push({
+            key: limit.key,
+            percent: limit.percent,
+            label: limit.label,
+            reset: reset
+        });
+        nextState[limit.key] = { resetsAt: stamp, notified: true };
+    }
+
+    return { notifications: notifications, nextState: nextState };
+}
+
 var publicApi = {
     num: num,
     validMs: validMs,
@@ -563,7 +806,26 @@ var publicApi = {
     byCriticality: byCriticality,
     pickPrimary: pickPrimary,
     sortForPanel: sortForPanel,
-    hasHiddenWarning: hasHiddenWarning
+    hasHiddenWarning: hasHiddenWarning,
+
+    // Constantes de cadencia y umbral. Exportadas a propósito: el panel de
+    // ajustes se ata a ellas en vez de repetir los números.
+    MAX_INTERVAL: MAX_INTERVAL,
+    MIN_INTERVAL: MIN_INTERVAL,
+    DEFAULT_IDLE_INTERVAL: DEFAULT_IDLE_INTERVAL,
+    DEFAULT_ALERT_INTERVAL: DEFAULT_ALERT_INTERVAL,
+    DEFAULT_WARN_THRESHOLD: DEFAULT_WARN_THRESHOLD,
+    TOKEN_MARGIN_MS: TOKEN_MARGIN_MS,
+
+    clampInterval: clampInterval,
+    usableInterval: usableInterval,
+    nextInterval: nextInterval,
+    parseRetryAfter: parseRetryAfter,
+    nonEmptyString: nonEmptyString,
+    safeParse: safeParse,
+    parseCredentials: parseCredentials,
+    extractCache: extractCache,
+    notificationsFor: notificationsFor
 };
 
 if (typeof module !== "undefined")
