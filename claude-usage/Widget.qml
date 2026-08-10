@@ -37,11 +37,15 @@
 //                                   `footerLabel`, `strings`). Cargar el
 //                                   catálogo aquí significaría releer los dos
 //                                   JSON una vez por pantalla.
-//   noctalia.togglePanel(...)    -> el popout de PluginComponent, que se abre
-//                                   solo al hacer clic si `popoutContent` no es
-//                                   nulo. Llega en la tarea 10.
-//   globals onClick() / update() -> `pillClickAction` (tarea 10) y, el segundo,
-//                                   nada: no hay repintado manual que provocar.
+//   noctalia.togglePanel(...)    -> el popout de PluginComponent, declarado al
+//                                   final de este fichero: con `popoutContent`
+//                                   no nulo, BasePill abre el popout al hacer
+//                                   clic sin que haya que engancharse a nada.
+//   globals onClick() / update() -> nada, ninguno de los dos. El primero porque
+//                                   el clic ya lo lleva el popout —`pillClickAction`
+//                                   se queda nulo a propósito, es la vía para
+//                                   SUSTITUIR ese comportamiento— y el segundo
+//                                   porque no hay repintado manual que provocar.
 //
 // ── Lo que la traducción cambia de forma, y por qué ──────────────────────────
 //
@@ -448,8 +452,527 @@ PluginComponent {
         }
     }
 
-    // El popout (panel.luau) es la tarea 10. Mientras `popoutContent` sea nulo,
-    // `hasPopout` es falso y el clic sobre la píldora no hace nada: no se
-    // declara un popout vacío porque abrir una ventana en blanco es peor que no
-    // abrir ninguna, y el plugin carga igual sin él.
+    // ═════════════════════════════════════════════════════════════════════════
+    // EL POPOUT — traducción de panel.luau
+    // ═════════════════════════════════════════════════════════════════════════
+    //
+    // El desglose. Layout P2 del spec §6: la ventana crítica manda y el resto va
+    // en lista fina. Igual que la píldora, SOLO PINTA: todo el texto llega ya
+    // formateado y ya traducido dentro de la variable global `usage`.
+    //
+    // **Este fichero NO importa i18n.js ni lee translations/.** DMS no tiene i18n
+    // para plugins y el único que ve el catálogo es el daemon, que corre una vez;
+    // Widget.qml se instancia una vez POR PANTALLA y cargar los dos JSON aquí los
+    // releería por cada una. Las tres claves `panel.*` del catálogo se usan desde
+    // aquí, pero resueltas en el daemon: `panel.updatedAgo` viaja dentro de
+    // `fetchedAtLabel` (y por tanto de `footerLabel`), y `panel.refresh` /
+    // `panel.extraCredits` dentro de `strings`.
+    //
+    // ── Las ataduras de panel.luau, y en qué quedó cada una ──────────────────
+    //
+    //   require("./logic.luau")      -> DESAPARECE. El panel solo llamaba a
+    //                                   Logic.describeMoney, y ese formateo bajó
+    //                                   al daemon (`moneyLabel`) porque el
+    //                                   separador decimal y el lado del símbolo
+    //                                   salen del catálogo. Aquí llegan
+    //                                   `usedLabel` y `limitLabel` ya montados.
+    //   noctalia.state.get("usage")  -> `usageState.value`, el mismo
+    //   noctalia.state.watch("usage")   PluginGlobalVar que usa la píldora. Las
+    //                                   dos colapsan en una: `value` es un
+    //                                   binding, leer ya es observar, y no hay
+    //                                   `render()` que volver a llamar.
+    //   noctalia.runAsync("noctalia msg plugin … refresh")
+    //                                -> `refreshRequest.set(Date.now())`. NO se
+    //                                   lanza un proceso: en DMS el canal entre
+    //                                   el widget y el daemon es otra variable
+    //                                   global del plugin, que el daemon vigila
+    //                                   con un Connections sobre
+    //                                   `onGlobalVarChanged`. Se manda la marca
+    //                                   de tiempo porque lo que importa es que
+    //                                   el valor CAMBIE.
+    //   noctalia.getConfig(clave)    -> `root.pluginData[clave]`, que
+    //                                   PluginComponent carga de SettingsData.
+    //   noctalia.tr(clave)           -> desaparece: ver arriba.
+    //   panel.render(árbol)          -> `popoutContent`, un Component. En DMS no
+    //                                   se repinta a mano; son bindings, así que
+    //                                   las cuatro llamadas (los tres estados
+    //                                   sin dato y el normal) pasan a ser cuatro
+    //                                   `visible:`.
+    //   ui.column / ui.row           -> Column / Row de QtQuick.
+    //   ui.scroll                    -> DankFlickable, pero con un matiz: aquí el
+    //                                   popout CRECE con el contenido (ver
+    //                                   `maxContentHeight` abajo), así que la
+    //                                   barra solo aparece si se pasa del techo.
+    //   ui.label                     -> StyledText.
+    //   ui.glyph                     -> DankIcon (Material Symbols).
+    //   ui.button                    -> DankButton (`text`, no `label`; esa
+    //                                   trampa era de ui.button y no se hereda).
+    //   ui.separator                 -> Rectangle de 1 px (`PanelDivider`), que
+    //                                   es como los pinta DMS.
+    //   ui.spacer                    -> DESAPARECE: en QML el empujón a la
+    //                                   derecha se hace anclando, no metiendo un
+    //                                   hijo elástico. Es `DetailRow`.
+    //   ui.box con flexGrow          -> `UsageBar`. Ver la nota de abajo.
+    //
+    // ── La barra de progreso se sigue pintando a mano, y ahora por otra razón ─
+    //
+    // El original la pintaba a mano porque el `ui.progress` de Noctalia estaba
+    // roto (commit f6fcfcc: cinco variantes pintadas a la vez salieron idénticas,
+    // llenas y blancas). Aquí el motivo es más simple: **DMS 1.5.3 no tiene
+    // ningún componente de barra lineal**. `M3WaveProgress` es un shader de
+    // seek de audio con onda y `phase` animada, no un indicador de porcentaje.
+    // Lo que DMS hace en su propia interfaz es exactamente esto — pista + relleno
+    // con dos Rectangle (`Modules/BuiltinDesktopPlugins/SystemMonitorWidget.qml`,
+    // barras de CPU/mem/disco) —, así que pintar a mano no es una excepción del
+    // plugin: es la casa.
+    //
+    // Cambia la FORMA, no el resultado: el original ponía dos cajas en una fila
+    // repartiéndose el ancho con `flexGrow` porque el DSL de Lua no tenía forma de
+    // superponer nada. En QML el relleno es un hijo de la pista y su ancho es
+    // `pista.width * pct`, que tampoco necesita saber cuánto mide el panel.
+    //
+    // ── Decir POR QUÉ el dato es viejo (spec §9) ─────────────────────────────
+    //
+    // El pie lleva las dos mitades, «Sin conexión · dato de hace 8 min» frente a
+    // «Caché local · hace 4 días», y las monta el daemon en `footerLabel`. Aquí
+    // se refuerzan con dos señales que no son texto, porque el texto del pie es
+    // lo primero que la vista se salta:
+    //
+    //   · **el bloque con los números se atenúa** al 0.7 —el mismo alfa de la
+    //     píldora, para que las dos superficies digan lo mismo— y el pie NO,
+    //     así que con dato viejo lo más brillante del popout es la explicación;
+    //   · **un glifo delante del pie**: `cloud_off` si el dato es el último valor
+    //     bueno en memoria y `history` si sale de la caché de disco, en
+    //     `Theme.warning`. Naranja y no rojo a propósito: el rojo ya significa
+    //     «cerca del límite» y son dos cosas ortogonales.
+    //
+    // Y el pie está en TODOS los estados, no solo en el normal. En panel.luau los
+    // tres estados sin número volvían antes de llegar al pie, así que con la
+    // sesión caducada no había ni procedencia ni botón de refrescar. Es el mismo
+    // fallo que daf3r vio en vivo hoy —un 44 congelado sin forma de saberlo— pero
+    // en el estado donde más falta hace.
+
+    // El canal de refresco hacia el daemon. Tiene que ser hijo directo del
+    // PluginComponent: `set()` saca el pluginId de `parent`.
+    PluginGlobalVar {
+        id: refreshRequest
+        varName: "refreshRequest"
+        defaultValue: 0
+    }
+
+    function requestRefresh() {
+        refreshRequest.set(Date.now());
+    }
+
+    // El equivalente de noctalia.getConfig, con el mismo cuidado que en el
+    // daemon: la ausencia es `undefined`, y no se resuelve el default con `||`
+    // porque un `false` o un `0` legítimos se perderían.
+    function configOr(key, fallback) {
+        const data = root.pluginData;
+        if (!data)
+            return fallback;
+        const value = data[key];
+        return (value === undefined || value === null) ? fallback : value;
+    }
+
+    // `~= false` en el original: el ajuste sin poner cuenta como activado.
+    readonly property bool showScopedLimits: root.configOr("show_scoped_limits", true) !== false
+    readonly property bool showExtraUsage: root.configOr("show_extra_usage", true) !== false
+
+    // `others` viene ya ordenada por criticidad y COMPLETA: aquí sí entran los
+    // sublímites por modelo, que la píldora deja fuera a propósito.
+    readonly property var others: (usage && usage.others) ? usage.others : []
+    readonly property var extraUsage: usage ? usage.extraUsage : null
+    readonly property bool hasExtraUsage: !!(extraUsage && (extraUsage.enabled || extraUsage.everEnabled))
+
+    readonly property string statusLabel: (usage && usage.statusLabel) ? usage.statusLabel : ""
+    readonly property string footerLabel: (usage && usage.footerLabel) ? usage.footerLabel : ""
+    readonly property string refreshLabel: (usage && usage.strings && usage.strings.refresh) ? usage.strings.refresh : ""
+    readonly property string extraCreditsLabel: (usage && usage.strings && usage.strings.extraCredits) ? usage.strings.extraCredits : ""
+
+    // El spec §7 no deja que un refresco a mano se trague en silencio.
+    readonly property bool inFlight: !!(usage && usage.inFlight)
+
+    // De dónde sale el dato viejo. Vacío cuando el dato es fresco.
+    readonly property string provenanceGlyph: {
+        if (!root.dimmed)
+            return "";
+        return (usage && usage.source === "cache") ? "history" : "cloud_off";
+    }
+
+    readonly property string primaryResets: {
+        const p = root.primary;
+        if (!p)
+            return "";
+        const abs = p.resetsAbs || "";
+        const rel = p.resetsRel || "";
+        return abs !== "" ? abs + " · " + rel : rel;
+    }
+
+    // ── Piezas repetidas ─────────────────────────────────────────────────────
+    // Como componentes en línea por el mismo motivo que WindowChunk: dos filas
+    // que se pintan distinto dejan de ser comparables de un vistazo. Nada de
+    // leer `root` desde dentro; todo entra por propiedades.
+
+    component PanelDivider: Rectangle {
+        width: parent ? parent.width : 0
+        height: 1
+        color: Theme.outlineLight
+    }
+
+    // Pista + relleno. El `percent` ya viene decidido por el daemon (incluido el
+    // `show_remaining`, que lo invierte): aquí no se calcula nada.
+    component UsageBar: Rectangle {
+        id: track
+
+        required property int percent
+        required property color fillColor
+
+        height: 6
+        radius: 3
+        color: Theme.withAlpha(Theme.outline, 0.2)
+
+        Rectangle {
+            width: track.width * Math.max(0, Math.min(100, track.percent)) / 100
+            height: track.height
+            radius: track.radius
+            color: track.fillColor
+
+            Behavior on width {
+                NumberAnimation {
+                    duration: Theme.shortDuration
+                    easing.type: Theme.standardEasing
+                }
+            }
+        }
+    }
+
+    // La fila «etiqueta … valor» del original (ui.label + ui.spacer + ui.label).
+    // El valor se ancla a la derecha y la etiqueta ocupa lo que queda: sin
+    // spacer, y la etiqueta larga se recorta en vez de empujar al valor fuera.
+    component DetailRow: Item {
+        id: row
+
+        required property string label
+        required property string value
+        property color labelColor: Theme.surfaceText
+        property color valueColor: Theme.surfaceText
+        property int fontSize: Theme.fontSizeSmall
+        property int fontWeight: Font.Normal
+
+        width: parent ? parent.width : 0
+        height: Math.max(rowLabel.implicitHeight, rowValue.implicitHeight)
+
+        StyledText {
+            id: rowValue
+
+            anchors.right: parent.right
+            anchors.verticalCenter: parent.verticalCenter
+            text: row.value
+            color: row.valueColor
+            font.pixelSize: row.fontSize
+            font.weight: row.fontWeight
+        }
+
+        StyledText {
+            id: rowLabel
+
+            anchors.left: parent.left
+            anchors.right: rowValue.left
+            anchors.rightMargin: Theme.spacingS
+            anchors.verticalCenter: parent.verticalCenter
+            text: row.label
+            color: row.labelColor
+            font.pixelSize: row.fontSize
+            font.weight: row.fontWeight
+            elide: Text.ElideRight
+        }
+    }
+
+    // ── Geometría ────────────────────────────────────────────────────────────
+    //
+    // 6eca0d0 dejó el panel de Noctalia en 360 de alto tras medirlo: allí la
+    // altura era un número FIJO del manifiesto, quedarse corto cortaba el pie sin
+    // barra de scroll y sin una línea en el log, y `height = "auto"` se aceptaba
+    // y se ignoraba. **En DMS ese problema no existe**: PluginPopout, en cuanto
+    // carga el contenido, rebindea su altura a `item.implicitHeight`
+    // (`Modules/Plugins/PluginPopout.qml`, en `Loader.onLoaded`), así que el
+    // popout crece con lo que haya dentro y no se puede cortar nada.
+    //
+    // `popoutHeight` solo se usa en los fotogramas anteriores a esa carga: es una
+    // estimación de arranque, no un techo. 220 sale de medir el popout real
+    // dentro del shell con los datos de hoy —tarjeta + barra + reinicio + dos
+    // límites + créditos + pie miden **201**, y PluginPopout les suma su propio
+    // padding hasta 217—, así que el primer fotograma ya sale del tamaño bueno y
+    // no se ve un salto al abrir.
+    //
+    // El techo de verdad es `maxContentHeight`, y ahí sí hay barra de scroll —
+    // que es lo que traduce el `ui.scroll` del original. 420 con 12 sublímites
+    // por modelo el contenido mide 451 y empieza a hacer scroll; con los 1-2 que
+    // la API devuelve hoy sobran 219. Es el criterio de 6eca0d0 (aguantar
+    // modelos nuevos sin tocar el número) sin su riesgo: pasarse ya no corta el
+    // pie en silencio, saca barra.
+    //
+    // El ancho es el de PluginComponent, 400, menos el padding que le mete
+    // PluginPopout: el contenido queda en 384. La línea más larga con diferencia
+    // es la del pie («Caché local · hace 8 h 11 min» más el botón), y cabe.
+    popoutWidth: 400
+    popoutHeight: 220
+
+    popoutContent: Component {
+        Item {
+            id: panel
+
+            // PluginPopout rellena las dos si el item las declara. `closePopout`
+            // no se usa —no hay botón de cerrar, igual que en el original: se
+            // sale con Escape o pinchando fuera— pero `parentPopout` sí, para
+            // saber cuándo se ABRE.
+            property var closePopout: null
+            property var parentPopout: null
+
+            // No `readonly`: el banco de pruebas lo sube para medir el contenido
+            // sin techo y así saber cuánto falta para tocarlo.
+            property int maxContentHeight: 420
+
+            implicitHeight: Math.min(body.implicitHeight, panel.maxContentHeight)
+
+            // Refresco inmediato al abrir (spec §7). No vale
+            // `Component.onCompleted`: DankPopout deja el árbol CALIENTE entre
+            // aperturas (`_contentWarm`), así que el item se crea una vez y las
+            // aperturas siguientes no lo volverían a crear. Se cuelga de que el
+            // popout pase a visible, y las dos vías están guardadas por
+            // `shouldBeVisible` para que un árbol precargado en frío no sondee.
+            //
+            // Un refresco de más no gasta cuota: `poll()` sale por la guarda
+            // `inFlight` si ya hay uno en vuelo.
+            function refreshOnOpen() {
+                if (panel.parentPopout && panel.parentPopout.shouldBeVisible)
+                    root.requestRefresh();
+            }
+
+            onParentPopoutChanged: panel.refreshOnOpen()
+
+            Connections {
+                target: panel.parentPopout
+                ignoreUnknownSignals: true
+
+                function onShouldBeVisibleChanged() {
+                    panel.refreshOnOpen();
+                }
+            }
+
+            // El ancho de la columna se toma del Flickable por su id y no con
+            // `parent.width`: dentro de un Flickable `parent` es el contentItem,
+            // cuyo tamaño sale de contentWidth/contentHeight, y encadenarlo con
+            // un contentHeight que depende de la columna es pedir un ciclo.
+            DankFlickable {
+                id: scroller
+
+                anchors.fill: parent
+                contentWidth: width
+                contentHeight: body.implicitHeight
+                clip: true
+
+                Column {
+                    id: body
+
+                    width: scroller.width
+                    spacing: Theme.spacingS
+
+                    // ── 1. Los estados sin dato ──────────────────────────────
+                    // Cargando, sesión caducada y sin conexión sin dato. El texto
+                    // lo trae `statusLabel`, ya traducido; el glifo es el mismo
+                    // que enseña la píldora, para que las dos superficies no
+                    // cuenten historias distintas.
+                    Item {
+                        width: parent.width
+                        height: Math.max(stateIcon.implicitHeight, stateText.implicitHeight)
+                        visible: !root.hasNumber
+
+                        DankIcon {
+                            id: stateIcon
+
+                            anchors.left: parent.left
+                            anchors.verticalCenter: parent.verticalCenter
+                            name: root.stateGlyph
+                            size: Theme.iconSize - 4
+                            color: root.usageStatus === "expired" ? Theme.error : Theme.surfaceVariantText
+                        }
+
+                        StyledText {
+                            id: stateText
+
+                            anchors.left: stateIcon.right
+                            anchors.leftMargin: Theme.spacingS
+                            anchors.right: parent.right
+                            anchors.verticalCenter: parent.verticalCenter
+                            text: root.statusLabel
+                            color: Theme.surfaceText
+                            font.pixelSize: Theme.fontSizeMedium
+                            wrapMode: Text.WordWrap
+                        }
+                    }
+
+                    // ── 2..4. El desglose ────────────────────────────────────
+                    // Atenuado entero cuando el dato es viejo, con el mismo 0.7
+                    // de la píldora. El pie queda fuera de este bloque a
+                    // propósito: es lo único que explica la atenuación.
+                    Column {
+                        width: parent.width
+                        spacing: Theme.spacingS
+                        visible: root.hasNumber
+                        opacity: root.dimmed ? root.attenuatedAlpha : 1.0
+
+                        // Tarjeta destacada: la ventana crítica.
+                        //
+                        // AQUÍ VA `UsageRing` (tarea 11). El anillo sustituye al
+                        // par glifo+porcentaje de esta fila, no a la barra: la
+                        // barra la conservan las demás filas.
+                        Item {
+                            width: parent.width
+                            height: Math.max(primaryIcon.implicitHeight, primaryLabel.implicitHeight, primaryPercent.implicitHeight)
+
+                            DankIcon {
+                                id: primaryIcon
+
+                                anchors.left: parent.left
+                                anchors.verticalCenter: parent.verticalCenter
+                                name: root.primary ? root.primary.glyph : ""
+                                size: Theme.iconSize - 4
+                                color: (root.primary && root.primary.warning) ? Theme.error : Theme.primary
+                            }
+
+                            StyledText {
+                                id: primaryPercent
+
+                                anchors.right: parent.right
+                                anchors.verticalCenter: parent.verticalCenter
+                                text: root.primary ? root.primary.percent + " %" : ""
+                                color: (root.primary && root.primary.warning) ? Theme.error : Theme.surfaceText
+                                font.pixelSize: Theme.fontSizeMedium
+                                font.weight: Font.Bold
+                            }
+
+                            StyledText {
+                                id: primaryLabel
+
+                                anchors.left: primaryIcon.right
+                                anchors.leftMargin: Theme.spacingS
+                                anchors.right: primaryPercent.left
+                                anchors.rightMargin: Theme.spacingS
+                                anchors.verticalCenter: parent.verticalCenter
+                                text: root.primary ? root.primary.label : ""
+                                color: Theme.surfaceText
+                                font.pixelSize: Theme.fontSizeMedium
+                                font.weight: Font.Bold
+                                elide: Text.ElideRight
+                            }
+                        }
+
+                        UsageBar {
+                            width: parent.width
+                            percent: root.primary ? root.primary.percent : 0
+                            fillColor: (root.primary && root.primary.warning) ? Theme.error : Theme.primary
+                        }
+
+                        // Cuándo se reinicia: absoluta y relativa, o solo la
+                        // relativa si no hay absoluta. Las dos llegan resueltas.
+                        StyledText {
+                            width: parent.width
+                            text: root.primaryResets
+                            color: Theme.surfaceVariantText
+                            font.pixelSize: Theme.fontSizeSmall
+                            elide: Text.ElideRight
+                            visible: text !== ""
+                        }
+
+                        // El resto de límites, ya ordenados por criticidad.
+                        PanelDivider {
+                            visible: root.showScopedLimits && root.others.length > 0
+                        }
+
+                        Repeater {
+                            model: root.showScopedLimits ? root.others : []
+
+                            delegate: DetailRow {
+                                required property var modelData
+
+                                label: modelData ? modelData.label : ""
+                                value: modelData ? modelData.percent + " %" : ""
+                                valueColor: (modelData && modelData.warning) ? Theme.error : Theme.surfaceText
+                            }
+                        }
+
+                        // Créditos extra. Los dos importes vienen montados del
+                        // daemon (`usedLabel` / `limitLabel`), que es donde está
+                        // el catálogo que decide el separador decimal y el lado
+                        // del símbolo.
+                        PanelDivider {
+                            visible: root.showExtraUsage && root.hasExtraUsage
+                        }
+
+                        DetailRow {
+                            visible: root.showExtraUsage && root.hasExtraUsage
+                            label: root.extraCreditsLabel
+                            value: root.extraUsage ? (root.extraUsage.usedLabel + " / " + root.extraUsage.limitLabel) : ""
+                        }
+                    }
+
+                    // ── 5. El pie: procedencia Y antigüedad ──────────────────
+                    PanelDivider {}
+
+                    Item {
+                        width: parent.width
+                        height: Math.max(footerInfo.implicitHeight, refreshButton.height)
+
+                        Row {
+                            id: footerInfo
+
+                            anchors.left: parent.left
+                            anchors.verticalCenter: parent.verticalCenter
+                            width: parent.width - refreshButton.width - Theme.spacingS
+                            spacing: Theme.spacingXS
+
+                            DankIcon {
+                                id: provenanceIcon
+
+                                visible: root.provenanceGlyph !== ""
+                                name: root.provenanceGlyph
+                                size: Theme.fontSizeSmall + 4
+                                color: Theme.warning
+                                anchors.verticalCenter: parent.verticalCenter
+                            }
+
+                            StyledText {
+                                width: footerInfo.width - (provenanceIcon.visible ? provenanceIcon.width + footerInfo.spacing : 0)
+                                anchors.verticalCenter: parent.verticalCenter
+                                text: root.footerLabel
+                                color: root.dimmed ? Theme.warning : Theme.surfaceVariantText
+                                font.pixelSize: Theme.fontSizeSmall
+                                elide: Text.ElideRight
+                            }
+                        }
+
+                        // Con una petición en vuelo el botón se apaga: es lo que
+                        // impide que un segundo clic parezca que no hizo nada
+                        // (spec §7). `inFlight` lo publica el daemon.
+                        DankButton {
+                            id: refreshButton
+
+                            anchors.right: parent.right
+                            anchors.verticalCenter: parent.verticalCenter
+                            text: root.refreshLabel
+                            iconName: "refresh"
+                            buttonHeight: 32
+                            horizontalPadding: Theme.spacingM
+                            backgroundColor: "transparent"
+                            textColor: Theme.primary
+                            enabled: !root.inFlight
+                            onClicked: root.requestRefresh()
+                        }
+                    }
+                }
+            }
+        }
+    }
 }
