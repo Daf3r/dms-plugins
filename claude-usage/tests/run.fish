@@ -80,22 +80,37 @@ begin
   printf '%s\n' '}'
 end > $here/manifest.fixture.luau
 
-# 2. Payloads reales de la API, heredados de Caelestia. Luau no parsea JSON.
-#    El módulo NO puede llamarse fixtures.luau: `require("./fixtures")` sería
-#    ambiguo con el directorio tests/fixtures/ y el intérprete se niega.
-if command -q python3
-  python3 $here/json2luau.py $here/fixtures/*.json > $here/payloads.fixture.luau
-  or set status_total 1
-  python3 $here/json2luau.py $plugin/translations/*.json > $here/translations.fixture.luau
-  or set status_total 1
-else
-  echo "# error: hace falta python3 para convertir los fixtures JSON a Luau" >&2
-  set status_total 1
-end
+# 2. Payloads y traducciones: YA NO SE GENERAN. tests/json2luau.py se borró en
+#    la tarea 6 del port. Existía solo porque el intérprete de Luau no parsea
+#    JSON; node lee los .json directamente (ver tests/run-js.fish), así que el
+#    conversor se quedó sin motivo.
+#
+#    Los dos módulos que producía (payloads.fixture.luau y
+#    translations.fixture.luau) están en .gitignore, o sea que en un árbol
+#    recién clonado no existen. Los .test.luau que los requieren se saltan en
+#    ese caso, con aviso, en vez de reventar con MODULE_NOT_FOUND: el resto de
+#    la suite Luau —la que sigue sirviendo de contraste mientras se traducen
+#    service, widget y panel— no los necesita. Todo esto desaparece con el Luau
+#    en la tarea 13. La suite equivalente en JS, que no se salta nada, es
+#    tests/run-js.fish.
 
 # ── Suite ────────────────────────────────────────────────────────────────────
 
 for f in $here/*.test.luau
+  # Qué módulo generado le falta a ESTE fichero. Se mira su `require`, no una
+  # lista escrita a mano: la lista se queda vieja y el fallo sale como un
+  # MODULE_NOT_FOUND que no explica nada.
+  set -l base (basename $f)
+  set -l missing
+  for m in payloads translations
+    if not test -f $here/$m.fixture.luau; and grep -q "$m.fixture" $f
+      set -a missing $m.fixture.luau
+    end
+  end
+  if test (count $missing) -gt 0
+    echo "# saltado $base: falta $missing, que generaba tests/json2luau.py (borrado en la tarea 6). El sucesor en JS es tests/run-js.fish" >&2
+    continue
+  end
   luau $f; or set status_total 1
 end
 exit $status_total
