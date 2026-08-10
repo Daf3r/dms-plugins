@@ -583,6 +583,45 @@ PluginComponent {
     // `others` viene ya ordenada por criticidad y COMPLETA: aquí sí entran los
     // sublímites por modelo, que la píldora deja fuera a propósito.
     readonly property var others: (usage && usage.others) ? usage.others : []
+
+    // Lo que la lista del popout pinta de verdad.
+    //
+    // `show_scoped_limits` se llama —y se etiqueta— «mostrar sublímites POR
+    // MODELO», pero apagarlo escondía `others` ENTERA, y ahí dentro está la
+    // ventana semanal: el ajuste te quitaba el número que decide tu semana. Un
+    // ajuste no puede hacer más de lo que promete su etiqueta, así que filtra
+    // solo lo suyo.
+    //
+    // El formato de la clave lo produce `Logic.limitKey(kind, scopeName)`:
+    // `kind` a secas, o `kind + ":" + scopeName`. Los sublímites por modelo son
+    // el kind `weekly_scoped`, con o sin modelo. Se decide aquí y no en el
+    // daemon porque `decorate()` ya publica `key` en cada límite, y `others`
+    // tiene que seguir siendo la lista completa: el ajuste es de la vista, no
+    // del dato.
+    //
+    // Es una función y no un bloque de binding para que la suite la pueda
+    // extraer y evaluar como JavaScript puro, igual que hace pill-slots.test.js
+    // con `pickWeekly` de Daemon.qml. Los dos argumentos entran explícitos, así
+    // que el binding sigue reaccionando a los dos.
+    function withoutScopedLimits(limits, showScoped) {
+        if (!limits)
+            return [];
+        if (showScoped)
+            return limits;
+        const kept = [];
+        for (let i = 0; i < limits.length; i++) {
+            const limit = limits[i];
+            if (!limit)
+                continue;
+            const key = limit.key || "";
+            if (key === "weekly_scoped" || key.indexOf("weekly_scoped:") === 0)
+                continue;
+            kept.push(limit);
+        }
+        return kept;
+    }
+
+    readonly property var panelLimits: root.withoutScopedLimits(root.others, root.showScopedLimits)
     readonly property var extraUsage: usage ? usage.extraUsage : null
     readonly property bool hasExtraUsage: !!(extraUsage && (extraUsage.enabled || extraUsage.everEnabled))
 
@@ -893,13 +932,16 @@ PluginComponent {
                             visible: text !== ""
                         }
 
-                        // El resto de límites, ya ordenados por criticidad.
+                        // El resto de límites, ya ordenados por criticidad. El
+                        // separador se ata a la MISMA lista que el Repeater: si
+                        // el filtro la deja vacía, no puede quedar colgando una
+                        // línea que no separa nada.
                         PanelDivider {
-                            visible: root.showScopedLimits && root.others.length > 0
+                            visible: root.panelLimits.length > 0
                         }
 
                         Repeater {
-                            model: root.showScopedLimits ? root.others : []
+                            model: root.panelLimits
 
                             delegate: DetailRow {
                                 required property var modelData

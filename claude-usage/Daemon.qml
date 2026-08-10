@@ -107,6 +107,10 @@ PluginComponent {
     // verdad de lo que hay publicado es esta.
     property var published: null
 
+    // Los argumentos de la última llamada a publish(). Ver publish() y
+    // republishFromState().
+    property var lastPublishArgs: null
+
     // El intervalo lo decide SIEMPRE Logic.nextInterval; esto es solo el valor
     // con el que arranca el Timer antes del primer applyCadence().
     property int pollIntervalMs: Logic.toMilliseconds(Logic.DEFAULT_IDLE_INTERVAL)
@@ -120,6 +124,10 @@ PluginComponent {
     property var fallbackCatalog: null
     property bool catalogsReady: false
     property int catalogsPending: 0
+
+    // La lengua con la que se cargó `catalog`. Es lo que permite distinguir un
+    // cambio del ajuste `language` de cualquier otro cambio de ajuste.
+    property string activeLanguage: ""
 
     // ── Estado publicado ─────────────────────────────────────────────────────
     // UNA sola clave con todo precalculado y preformateado (spec heredada
@@ -246,16 +254,25 @@ PluginComponent {
         }, root.catalog, root.fallbackCatalog);
     }
 
-    // Mismo criterio que el I18n de DMS (Common/I18n.qml): el idioma de la
-    // sesión manda sobre el del sistema. Del tag solo interesa la lengua
+    // Mismo criterio que el I18n de DMS (Common/I18n.qml) para la locale: la de
+    // la sesión manda sobre la del sistema. Del tag solo interesa la lengua
     // ("es_ES" -> "es"), porque el plugin trae sus catálogos por lengua.
+    //
+    // Pero la locale ya no decide sola: el ajuste `language` la pisa cuando no
+    // es "auto". Seguir la locale a secas condena al inglés a quien tenga la
+    // sesión fijada en en_US aunque quiera el plugin en español, y forzar "es"
+    // rompería el plugin para todos los demás. La regla vive en i18n.js
+    // (`pickLanguage`) porque Settings.qml tiene que decidir EXACTAMENTE igual:
+    // si divergieran, el panel de ajustes se vería en un idioma y la píldora en
+    // otro.
     function localeLanguage() {
         const tag = (SessionData.locale && SessionData.locale !== "") ? SessionData.locale : Qt.locale().name;
-        return String(tag).split(/[_-]/)[0];
+        return I18n.pickLanguage(getConfig("language"), tag);
     }
 
     function loadCatalogs() {
         const lang = localeLanguage();
+        root.activeLanguage = lang;
         const wantsOther = lang !== "en";
         root.catalogsPending = wantsOther ? 2 : 1;
         catalogGuard.restart();
@@ -299,7 +316,62 @@ PluginComponent {
         root.maybeStart();
     }
 
+    // Recarga en caliente del catálogo, cuando el ajuste `language` cambia con
+    // el daemon YA arrancado.
+    //
+    // Deliberadamente NO reutiliza loadCatalogs(): ese camino es la máquina de
+    // arranque (catalogsPending, catalogsReady, catalogGuard, maybeStart) y
+    // volver a entrar en él con el daemon en marcha significaría rearmar el
+    // vigilante de arranque para nada y pasar por un finishCatalogs() que ya no
+    // hace nada. Este camino no toca ninguna de esas tres cosas: cambia el
+    // catálogo y republica.
+    //
+    // `fallbackCatalog` no se relee: en.json no cambia en tiempo de ejecución.
+    // Y NO se sondea: el texto se recompone del estado que ya hay, la red no
+    // entra aquí.
+    function reloadCatalogs() {
+        const lang = localeLanguage();
+        if (lang === root.activeLanguage)
+            return;
+        root.activeLanguage = lang;
+
+        if (lang === "en") {
+            root.catalog = root.fallbackCatalog;
+            republishFromState();
+            return;
+        }
+
+        readJsonFile(pluginPath("translations/" + lang + ".json"), function (doc) {
+            // Un idioma sin catálogo cae al respaldo inglés, igual que en el
+            // arranque.
+            root.catalog = doc || root.fallbackCatalog;
+            root.republishFromState();
+        });
+    }
+
     // ── Ajustes ──────────────────────────────────────────────────────────────
+
+    // Un ajuste cambió (el modal de ajustes escribe, PluginService avisa y
+    // PluginComponent recarga `pluginData` entero). Lo que se publica depende
+    // de tres de ellos —`warn_threshold` decide el aviso, `show_remaining`
+    // invierte los porcentajes y `language` cambia todo el texto—, y sin esto
+    // el usuario no vería el efecto hasta el siguiente sondeo, que puede ser
+    // dentro de cinco minutos.
+    //
+    // NINGUNA PETICIÓN sale de aquí: se recalcula desde `lastPublishArgs`, que
+    // es lo último que se publicó. La cadencia (idle_interval/alert_interval) no
+    // se toca: la recoge el siguiente applyCadence, y rearmar el temporizador en
+    // cada arrastre del deslizador sería peor.
+    onPluginDataChanged: {
+        if (!root.started)
+            return;
+        if (localeLanguage() !== root.activeLanguage) {
+            // reloadCatalogs() republica cuando el catálogo nuevo llega.
+            reloadCatalogs();
+            return;
+        }
+        republishFromState();
+    }
 
     // `noctalia.getConfig` devolvía nil para un ajuste sin poner; aquí la
     // ausencia es `undefined`. Deliberadamente NO se resuelve el default con
@@ -571,6 +643,18 @@ PluginComponent {
     }
 
     function publish(status, model, source, fetchedAt) {
+        // Lo que hizo falta para componer esto, guardado tal cual. Es lo que
+        // permite recomponer el estado publicado cuando cambia un ajuste —otro
+        // umbral, otro idioma, otro sentido de los porcentajes— sin volver a
+        // pedirle nada a la API. `lastModel` por sí solo no basta: no dice si lo
+        // último publicado era "ok" o "stale", ni de dónde venía.
+        root.lastPublishArgs = {
+            status: status,
+            model: model,
+            source: source,
+            fetchedAt: fetchedAt
+        };
+
         const threshold = configOr("warn_threshold", Logic.DEFAULT_WARN_THRESHOLD);
         const showRemaining = getConfig("show_remaining") === true;
         const nowMs = Date.now();
@@ -642,6 +726,16 @@ PluginComponent {
             stallGuard.restart();
         else
             stallGuard.stop();
+    }
+
+    // Republica lo mismo que hay, recompuesto con los ajustes y el catálogo de
+    // AHORA. Sin red y sin tocar `failures` ni la cadencia: es exactamente la
+    // última publicación, pintada otra vez.
+    function republishFromState() {
+        const args = root.lastPublishArgs;
+        if (!args)
+            return;
+        publish(args.status, args.model, args.source, args.fetchedAt);
     }
 
     function republishInFlight() {

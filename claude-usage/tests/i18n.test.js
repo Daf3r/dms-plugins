@@ -116,6 +116,64 @@ test("weekday ausente en los dos catálogos cae a la clave literal weekday.<N>",
     assert.equal(result, "el weekday.3 a las 19:30");
 });
 
+// ── pickLanguage ────────────────────────────────────────────────────────────
+//
+// La regla de qué idioma se usa. Vive en i18n.js, y no en cada .qml, porque la
+// necesitan DOS superficies: Daemon.qml (que carga el catálogo con el que
+// preformatea todo el texto del estado publicado) y Settings.qml (que carga el
+// suyo para las etiquetas de los ajustes). Si divergieran, el panel de ajustes
+// se vería en un idioma y la píldora en otro.
+//
+// Por qué existe el ajuste y no basta con la locale: una sesión con
+// `i18n.defaultLocale = "en_US.UTF-8"` —que es una elección deliberada del
+// usuario para el resto del escritorio— condenaría este plugin al inglés para
+// siempre. Y forzar "es" lo rompería para cualquier otro, que es lo contrario
+// de por qué se conservó el i18n.
+
+test("un ajuste explícito gana a la locale", function () {
+    assert.equal(I18n.pickLanguage("es", "en_US.UTF-8"), "es");
+    assert.equal(I18n.pickLanguage("en", "es_ES.UTF-8"), "en");
+});
+
+test('"auto" sigue la locale', function () {
+    assert.equal(I18n.pickLanguage("auto", "es_ES.UTF-8"), "es");
+    assert.equal(I18n.pickLanguage("auto", "en_US.UTF-8"), "en");
+});
+
+test("el ajuste sin poner cuenta como auto", function () {
+    // Es lo que devuelve getConfig() para una clave ausente, y lo que había
+    // antes de que el ajuste existiera: la locale decidía sola.
+    assert.equal(I18n.pickLanguage(undefined, "es_ES.UTF-8"), "es");
+    assert.equal(I18n.pickLanguage(null, "es_ES.UTF-8"), "es");
+    assert.equal(I18n.pickLanguage("", "es_ES.UTF-8"), "es");
+});
+
+test("del tag de locale solo interesa la lengua", function () {
+    // El plugin trae un catálogo por LENGUA, no por región.
+    assert.equal(I18n.pickLanguage("auto", "es_ES.UTF-8"), "es");
+    assert.equal(I18n.pickLanguage("auto", "es-419"), "es");
+    assert.equal(I18n.pickLanguage("auto", "pt_BR"), "pt");
+    assert.equal(I18n.pickLanguage("auto", "es"), "es");
+});
+
+test("una locale ausente o vacía cae al inglés, que es el catálogo que siempre existe", function () {
+    assert.equal(I18n.pickLanguage("auto", ""), "en");
+    assert.equal(I18n.pickLanguage("auto", null), "en");
+    assert.equal(I18n.pickLanguage("auto", undefined), "en");
+});
+
+test("un idioma sin catálogo se devuelve igual: el respaldo lo decide render, no esto", function () {
+    // pickLanguage no sabe qué catálogos existen; devolver "fr" es correcto y
+    // quien carga el fichero cae al respaldo inglés cuando no lo encuentra.
+    assert.equal(I18n.pickLanguage("auto", "fr_FR.UTF-8"), "fr");
+});
+
+test("mayúsculas y sufijos no cambian la lengua elegida", function () {
+    assert.equal(I18n.pickLanguage("ES", "en_US"), "es");
+    assert.equal(I18n.pickLanguage("AUTO", "es_ES"), "es");
+    assert.equal(I18n.pickLanguage("auto", "ES_es.UTF-8"), "es");
+});
+
 test("weekday no pisa otros params, y no muta el objeto params original", function () {
     var catalog = {
         "weekday.3": "martes",

@@ -10,6 +10,8 @@
   "settings.show_extra_usage.label": "Show extra credits",
   "settings.show_remaining.label": "Show remaining instead of used",
   "settings.show_remaining.description": "The bar widget shows what is left rather than what is spent.",
+  "settings.language.label": "Language",
+  "settings.language.description": "Language of this plugin's own text. Auto follows the session locale.",
   "state.loading": "Loading…",
   "state.offline": "Offline",
   "state.expired": "Session expired. Open Claude Code to renew it.",

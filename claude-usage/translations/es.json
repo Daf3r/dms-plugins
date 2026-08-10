@@ -10,6 +10,8 @@
   "settings.show_extra_usage.label": "Mostrar créditos extra",
   "settings.show_remaining.label": "Mostrar restante en vez de consumido",
   "settings.show_remaining.description": "El widget muestra lo que queda en lugar de lo gastado.",
+  "settings.language.label": "Idioma",
+  "settings.language.description": "Idioma del texto propio de este plugin. Auto sigue la locale de la sesión.",
   "state.loading": "Cargando…",
   "state.offline": "Sin conexión",
   "state.expired": "Sesión caducada. Abre Claude Code para renovarla.",

@@ -110,8 +110,43 @@ function render(descriptor, catalog, fallbackCatalog) {
     return substitute(pattern, params);
 }
 
+// ---------------------------------------------------------------------------
+// Elección de idioma
+// ---------------------------------------------------------------------------
+//
+// El plugin trae un catálogo POR LENGUA (translations/en.json, es.json), así
+// que de un tag de locale ("es_ES.UTF-8", "en-US") solo interesa la lengua.
+// Un tag vacío o no utilizable cae a "en", que es el catálogo de respaldo que
+// siempre existe.
+function languageOf(localeTag) {
+    if (localeTag === null || localeTag === undefined) return "en";
+    var lang = String(localeTag).split(/[_\-.]/)[0].toLowerCase();
+    return lang === "" ? "en" : lang;
+}
+
+// pickLanguage(setting, localeTag) -> "en" | "es" | …
+//
+// La regla que comparten Daemon.qml y Settings.qml, y por eso vive aquí: si
+// hay ajuste explícito, gana el ajuste; si el ajuste es "auto" (o no está
+// puesto), se sigue la locale de la sesión.
+//
+// Existe porque seguir la locale a secas no basta: una sesión con
+// `i18n.defaultLocale = "en_US.UTF-8"` condena al inglés para siempre aunque
+// el usuario quiera el plugin en español, y forzar "es" rompería el plugin
+// para todos los demás. Las dos superficies TIENEN que decidir igual: si
+// divergieran, el panel de ajustes se vería en un idioma y la píldora en otro.
+function pickLanguage(setting, localeTag) {
+    if (typeof setting === "string") {
+        var chosen = languageOf(setting);
+        if (chosen !== "auto" && setting !== "") return chosen;
+    }
+    return languageOf(localeTag);
+}
+
 var publicApi = {
-    render: render
+    render: render,
+    languageOf: languageOf,
+    pickLanguage: pickLanguage
 };
 
 if (typeof module !== "undefined")
