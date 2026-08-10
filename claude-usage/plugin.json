@@ -1,0 +1,17 @@
+{
+    "id": "claudeUsage",
+    "name": "Claude Usage",
+    "description": "Consumo de la suscripcion de Claude, con desglose de ventanas de limite",
+    "version": "0.1.0",
+    "author": "daf3r",
+    "type": "composite",
+    "icon": "monitoring",
+    "capabilities": ["dankbar-widget", "monitoring"],
+    "components": {
+        "daemon": "./Daemon.qml",
+        "widget": "./Widget.qml"
+    },
+    "settings": "./Settings.qml",
+    "permissions": ["settings_read", "settings_write", "network"],
+    "requires_dms": ">=1.5.0"
+}
