@@ -875,10 +875,14 @@ PluginComponent {
     }
 
     // ── Notificaciones ───────────────────────────────────────────────────────
-    function notify(notification) {
-        // Dos claves enteras y no una frase + trozo pegado: en la cláusula de
-        // reinicio la lengua decide dónde va, y concatenar se lo impediría.
-        const body = notification.reset ? root.tr("notify.bodyWithReset", {
+
+    // El cuerpo de UN aviso. Dos claves enteras y no una frase + trozo pegado:
+    // en la cláusula de reinicio la lengua decide dónde va, y concatenar se lo
+    // impediría. Por eso `reset` entra como PARÁMETRO y sigue entrando así
+    // aunque luego varios cuerpos se junten: lo que se une son frases ya
+    // montadas, nunca trozos de una.
+    function notifyBody(notification) {
+        return notification.reset ? root.tr("notify.bodyWithReset", {
             percent: notification.percent,
             limit: root.render(notification.label),
             reset: root.render(notification.reset)
@@ -886,18 +890,56 @@ PluginComponent {
             percent: notification.percent,
             limit: root.render(notification.label)
         });
+    }
 
-        // `noctalia.notify(resumen, cuerpo)` -> el toast de DMS. `toast warn`
-        // acepta un solo texto y perdería el resumen "Claude" que pide el spec
-        // §11; `toast warnWith` acepta resumen y detalle. Los dos argumentos
-        // que sobran van vacíos: `command` porque el toast no lanza nada, y
-        // `category` con el id del plugin para poder descartarlos por grupo.
-        //
-        // Verificado en vivo el 2026-08-10 contra el shell corriendo (sin este
-        // plugin activo): `dms ipc toast warnWith Claude "…" "" claudeUsage`
-        // devuelve TOAST_WARN_SUCCESS y `dms ipc toast status` enseña
-        // `visible:warn:Claude`.
-        Quickshell.execDetached(["dms", "ipc", "toast", "warnWith", root.tr("title"), body, "", root.pluginId]);
+    // UN toast por sondeo, no uno por límite.
+    //
+    // El spec §11 exige cubrir TODOS los límites, y mandar uno por límite no lo
+    // conseguía: el resumen es siempre el mismo ("Claude") y el nivel siempre
+    // warn, así que el ToastService de DMS descarta el tercero y siguientes
+    // ANTES de mirar su propia cola —`toastQueue.some(t => t.message === message
+    // && t.level === level)` y `return`—, y el techo real quedaba en DOS. Con
+    // tres ventanas cruzadas en el mismo sondeo (session 91, weekly_all 93,
+    // weekly_scoped:Opus 95, que es lo normal cerca del reinicio semanal) el
+    // tercero se perdía en silencio; y como `notificationsFor` ya había
+    // devuelto `notified: true` para los tres y eso se persiste, no se
+    // reintentaba jamás para esa ventana.
+    //
+    // Juntar los cuerpos es inmune a las DOS barreras a la vez —el filtro de
+    // duplicados y `maxQueueSize`— sin depender de las tripas de ToastService,
+    // que pueden cambiar en 1.6. Y no toca logic.js ni el antirrebote:
+    // `notificationsFor` sigue siendo la única definición de qué se notifica y
+    // sigue marcando `notified` una vez por ventana, que ahora es correcto
+    // porque el aviso sí sale.
+    //
+    // Se descartó dar a cada límite un resumen distinto: esquiva el filtro de
+    // duplicados pero sigue perdiendo el cuarto por `maxQueueSize`, y taparlo
+    // bien exigiría saber cuáles aceptó el host, que es justo lo que
+    // `execDetached` no devuelve.
+    //
+    // El orden de las líneas es el de `result.notifications`, que es el de
+    // `model.limits`, que es el del array de la API (o el orden fijo del camino
+    // legado): determinista, no una iteración de claves de objeto.
+    //
+    // `noctalia.notify(resumen, cuerpo)` -> el toast de DMS. `toast warn`
+    // acepta un solo texto y perdería el resumen "Claude" que pide el spec
+    // §11; `toast warnWith` acepta resumen y detalle — y con detalle marca
+    // `hasDetails` y alarga la duración, que es justo lo que hace falta cuando
+    // el cuerpo son cinco líneas. Los dos argumentos que sobran van vacíos:
+    // `command` porque el toast no lanza nada, y `category` con el id del
+    // plugin para poder descartarlos por grupo.
+    //
+    // Verificado en vivo el 2026-08-10 contra el shell corriendo (sin este
+    // plugin activo): `dms ipc toast warnWith Claude "…" "" claudeUsage`
+    // devuelve TOAST_WARN_SUCCESS y `dms ipc toast status` enseña
+    // `visible:warn:Claude`.
+    function notify(notifications) {
+        const bodies = [];
+        for (let i = 0; i < notifications.length; i++)
+            bodies.push(notifyBody(notifications[i]));
+        if (bodies.length === 0)
+            return;
+        Quickshell.execDetached(["dms", "ipc", "toast", "warnWith", root.tr("title"), bodies.join("\n"), "", root.pluginId]);
     }
 
     // ── Sondeo ───────────────────────────────────────────────────────────────
@@ -1070,15 +1112,25 @@ PluginComponent {
         // las emite, y fallbackToCache nunca llega aquí.
         const result = Logic.notificationsFor(model.limits, threshold, root.notifyState, nowMs);
         if (root.notifyStateLoaded) {
-            for (let i = 0; i < result.notifications.length; i++)
-                notify(result.notifications[i]);
+            notify(result.notifications);
+            // Persistir SOLO cuando el antirrebote está cargado. Guardarlo en
+            // modo degradado marcaba `notified: true` en disco para ventanas
+            // que nunca se anunciaron —el aviso se acababa de suprimir tres
+            // líneas más abajo—, así que el arranque siguiente, ya con el
+            // antirrebote bueno, las veía notificadas y se las callaba para
+            // siempre. Sin escribir, la ventana sigue viva y el primer sondeo
+            // con antirrebote la anuncia.
+            saveNotifyState(result.nextState);
         } else if (result.notifications.length > 0) {
             // Modo degradado. Notificar sin antirrebote cargado repetiría el
             // mismo aviso en cada arranque, que es justo el fallo que se
             // reportó; callar es lo correcto, pero nunca en silencio.
             console.warn("claudeUsage: " + result.notifications.length + " aviso(s) suprimido(s): el antirrebote no está cargado");
         }
-        saveNotifyState(result.nextState);
+        // La copia en memoria sí se actualiza siempre: mantiene el registro de
+        // ventanas al día dentro de esta generación y no puede provocar un
+        // silencio, porque en modo degradado los avisos ya están suprimidos por
+        // la guarda de arriba.
         root.notifyState = result.nextState;
 
         root.applyCadence(warning);
