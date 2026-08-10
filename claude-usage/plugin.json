@@ -1,7 +1,7 @@
 {
     "id": "claudeUsage",
     "name": "Claude Usage",
-    "description": "Consumo de la suscripcion de Claude, con desglose de ventanas de limite",
+    "description": "Claude subscription usage in the bar, broken down by limit window",
     "version": "0.1.0",
     "author": "daf3r",
     "type": "composite",
