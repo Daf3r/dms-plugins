@@ -13,8 +13,17 @@ Es el **tercer destino** del mismo plugin. El diseño no cambia; cambia el shell
   verde, rama `feat/claude-usage` (`c47b2f1`). Bloqueada por causa ajena: el sistema de
   plugins de Caelestia ([PR #1703](https://github.com/caelestia-dots/shell/pull/1703))
   sigue sin mergear.
-- **2026-08-07** — spec aprobada para Noctalia v5, sin implementar. Exigía traducir todo
-  a Luau.
+- **2026-08-07** — spec aprobada para Noctalia v5 **e implementada entera**: `logic.luau`
+  (548 líneas), `service.luau`, `widget.luau`, `panel.luau`, catálogo i18n en dos idiomas
+  y once ficheros de test, en quince commits.
+
+> **Corrección del 2026-08-10.** La primera versión de este documento afirmaba que la
+> implementación de Noctalia no existía, y sobre esa premisa construía una §2 titulada
+> "el puerto a DMS es barato" que daba por hecho copiar el `logic.js` de Caelestia. Era
+> falso: bastaba listar `claude-usage/` en este repo para verlo. El error se detectó al
+> ejecutar la tarea 2 del plan, cuando el subagente encontró la implementación en Luau y
+> preguntó qué hacer con ella. Las secciones 2 y 3 están reescritas; lo que sigue vigente
+> se marca como tal.
 - **2026-08-10** — daf3r migra a DMS (ver `~/nixos-config`, rama `dms`). Este documento.
 
 **Este documento no repite la spec de Noctalia.** Todo lo que no dependía del shell se
@@ -23,36 +32,89 @@ mismo directorio: fuente de datos (§3), cadencia (§7), estados y errores (§9)
 (§10), notificaciones (§11), seguridad (§12) y fuera de alcance (§14). Aquí solo está lo
 que **cambia** al pasar a DMS.
 
-## 2. El puerto a DMS es barato, y por qué
+## 2. De qué versión se parte
 
-Los plugins de Noctalia se escriben en **Luau**. Los de DMS, en **QML + JavaScript** —
-los mismos dos lenguajes que Caelestia. La traducción función por función que dominaba
-el presupuesto del port a Noctalia **desaparece**.
+Hay **dos implementaciones terminadas** del mismo plugin, y la pregunta no es Luau contra
+JavaScript: es cuál de los dos diseños se conserva.
 
-| Fichero | Origen | Trabajo en DMS |
+|  | Caelestia (2026-08-03) | Noctalia (2026-08-07) |
 | --- | --- | --- |
-| `logic.js` (506 líneas) | Caelestia | **ninguno**, se copia tal cual |
-| `tests/logic.test.js` + 4 fixtures + `run.fish` | Caelestia | **ninguno**, se copian |
-| `plugin.json` | `manifest.json` | traducir al esquema de DMS |
-| `Daemon.qml` | `UsageService.qml` | adaptar a `PluginComponent` sin UI |
-| `Widget.qml` | `widget` + `panel` de Noctalia | fusionar en uno (ver §4) |
-| `Settings.qml` | `Settings.qml` | adaptar a los componentes de ajustes de DMS |
-| `components/UsageRing.qml` | Caelestia | retematizar a los tokens de DMS |
+| Lenguaje | QML + JavaScript | Luau |
+| Lógica | `logic.js`, 506 líneas | `logic.luau`, **548 líneas** |
+| Funciones | 28 | **30** |
+| Formato de textos | devuelve cadenas ya formateadas | devuelve **descriptores** |
+| i18n | no | **catálogo `en` + `es`** |
+| Tests | 1 fichero, 69 casos | **11 ficheros** + `MANUAL.md` |
 
-El 85 % vuelve a ser 85 % real, no un 85 % que había que reescribir.
+**Se parte de la de Noctalia**, que es posterior y mejor. Su refactor no es cosmético:
+`formatRelative` devolvía `"en 10 h 34 min"`, mientras `describeRelative` devuelve
+`{ key = "time.in", params = { duration = "10 h 34 min" } }` y deja que un catálogo
+resuelva la clave. Eso es lo que hizo posible el español, y es la diferencia entre un
+plugin traducible y uno que no lo es.
+
+Elegir Caelestia por estar ya en JavaScript habría sido optimizar el coste de la
+traducción a costa del producto.
+
+### Lo que cuesta
+
+`logic.luau` tiene 548 líneas y **solo 4 referencias** a la API del host: es lógica pura
+de verdad. Y su antepasado directo son las 506 líneas de `logic.js`, en el mismo lenguaje
+al que hay que volver. No es traducir desde cero, es aplicar el refactor de descriptores
+sobre una base que ya existe en JavaScript.
+
+Lo caro son las **94 ataduras al host** repartidas en el resto:
+
+| Fichero | Líneas | Referencias `noctalia.*` / `ui.*` | Destino en DMS |
+| --- | --- | --- | --- |
+| `logic.luau` | 548 | 4 | `logic.js` |
+| `service.luau` | 281 | 34 | `Daemon.qml` |
+| `panel.luau` | 165 | 47 | `popoutContent` de `Widget.qml` |
+| `widget.luau` | 127 | 13 | píldoras de `Widget.qml` |
+| `translations/*.json` | 46 + 46 | — | **se reutilizan tal cual** |
+
+Los 11 ficheros de test en Luau son el mapa del port y se traducen a `node --test`. El
+`logic.js` y los 69 casos de Caelestia quedan como referencia de consulta, no como base.
+
+## 2 bis. i18n: el catálogo y su renderizador
+
+`logic.js` no formatea texto de cara al usuario. Devuelve **descriptores**:
+
+```js
+{ key: "time.in", params: { duration: "10 h 34 min" } }
+```
+
+`translations/en.json` y `es.json` mapean la clave a una plantilla con marcadores
+`{param}` — 46 líneas cada uno, y **se reutilizan sin tocar**: son JSON y no saben nada de
+Luau ni de Noctalia.
+
+Lo que falta es el renderizador. Noctalia resolvía las claves por su cuenta; **DMS no
+tiene i18n para plugins**, así que se escribe uno: un `i18n.js` que carga el catálogo del
+idioma, resuelve `key` e interpola `params`, con respaldo a `en` cuando falta una clave y
+a la propia clave cuando falta en ambos. Es pequeño y es lógica pura, así que se prueba
+con `node --test` como el resto.
+
+`tests/translations.test.luau` ya cubre que cada clave usada por la lógica existe en los
+dos catálogos. Ese test se porta y sigue siendo la red que impide que un descriptor nuevo
+salga a producción sin traducir.
 
 ## 3. Tres cosas que este port recupera y el de Noctalia perdía
 
 Son deudas que la spec de Noctalia documentaba como inevitables. En DMS no lo son.
 
-### 3.1 `parseRetryAfter` vuelve
+### 3.1 `parseRetryAfter` vuelve, y hay que traerla a mano
 
 Noctalia expone `HttpResponse = { ok, status, body }` — **sin cabeceras**. La §8 de aquella
-spec eliminaba `parseRetryAfter` y dejaba el 429 en backoff por duplicación, y lo llamaba
-"la única regla de la spec heredada que no se cumple al pie de la letra".
+spec eliminaba `parseRetryAfter`, y `logic.luau` en efecto **no la contiene**: `grep` da
+cero.
 
-En QML las cabeceras son legibles por los dos caminos de §5. La regla original de la
-spec de Caelestia (§6) **se cumple entera**.
+El spike del 2026-08-10 (tarea 1) confirmó que `XMLHttpRequest` sí lee cabeceras dentro
+de un plugin de DMS: la píldora de prueba devolvió `status=429 date=SI`. Así que la
+función vuelve — pero **no sale de `logic.luau`, hay que recuperarla de `logic.js` de
+Caelestia**, junto con los casos de test que la cubrían. Es la única pieza que viaja en
+sentido contrario al resto del port.
+
+El 429 del spike, además, no fue casual: el endpoint limita de verdad, así que respetar
+`Retry-After` no es un adorno.
 
 ### 3.2 El `UsageRing` vuelve
 
@@ -60,14 +122,26 @@ El vocabulario `ui.*` de Noctalia no tiene arco ni canvas, así que el anillo co
 ventana codificada por forma (commit `1609cad`) no se podía dibujar. `Canvas` es QtQuick
 de base: el componente se recupera del árbol de Caelestia.
 
-### 3.3 El desempate explícito sobra
+### 3.3 El desempate explícito se conserva, aunque JavaScript no lo exija
 
 La §4.2 de Noctalia anotaba que `table.sort` de Luau **no es estable**, y que sin un
-tercer criterio por índice en `PRIMARY_KINDS` el glifo de la barra alternaría entre
-sesión y semana entre refrescos con el mismo dato.
+tercer criterio el glifo de la barra alternaría entre sesión y semana entre refrescos con
+el mismo dato. `logic.luau` lo resolvió desempatando por `key`:
 
-`Array.prototype.sort` de JavaScript **es estable por norma desde ES2019**. La asunción
-original de `logic.js` vuelve a ser correcta y el parche no se escribe.
+```lua
+if ra ~= rb then return ra > rb end
+if a.percent ~= b.percent then return a.percent > b.percent end
+return a.key < b.key
+```
+
+Su comentario añade una segunda razón, que no es de Luau: sin desempate, un comparador
+que devuelve el mismo sentido para el par `(a,b)` y `(b,a)` **lanza "invalid order
+function for sorting"**.
+
+`Array.prototype.sort` de JavaScript es estable por norma desde ES2019, así que el port
+podría prescindir de la tercera línea. **No lo hace.** Un orden total, determinista e
+irreflexivo es correcto por sí mismo, no por lo que garantice el motor de turno, y
+quitarlo cambiaría el resultado de los tests de ordenación heredados sin ganar nada.
 
 ## 4. Arquitectura: `composite`, no `widget`
 
@@ -160,10 +234,11 @@ Revisable cuando lleve tiempo estable.
 
 ## 7. Pruebas
 
-`logic.js` no importa nada del host. Es lo que permite correr los 69 casos con
+`logic.js` no importa nada del host. Es lo que permite correr la suite con
 `node --test` **sin levantar el shell**, y es la propiedad que sobrevive intacta a los
-tres cambios de destino. La suite se copia sin tocar y debe estar en verde antes y
-después del port.
+tres cambios de destino. La suite ya NO se copia sin tocar: los 11 ficheros de test en
+Luau se traducen a `node --test`, y son ellos —no los 69 casos de Caelestia— la red que
+verifica el port. Cada fichero portado debe estar en verde antes de pasar al siguiente.
 
 `tests/run.fish` se copia igual y ya trae dos cosas que no hay que redescubrir: fija
 `TZ=Europe/Madrid`, sin lo cual los formatos de hora no son deterministas, y pasa el glob
