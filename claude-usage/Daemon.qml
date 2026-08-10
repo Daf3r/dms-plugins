@@ -86,6 +86,20 @@ PluginComponent {
     property var notifyState: ({})
     property var lastModel: null
 
+    // ¿Se pudo cargar el antirrebote? Mientras sea false NO se notifica: sin él
+    // cada arranque repetiría los mismos avisos. `notifyStateDegraded` es el
+    // permiso para arrancar igualmente cuando no hay forma de cargarlo —
+    // callado, pero vivo (ver notifyStateRetry).
+    property bool notifyStateLoaded: false
+    property bool notifyStateDegraded: false
+
+    // Lo último que este daemon entregó a savePluginState. Empieza vacío a
+    // propósito: es lo que garantiza una escritura por generación. Ver
+    // saveNotifyState.
+    property string notifyStatePersisted: ""
+
+    property bool started: false
+
     // Copia local de lo último publicado. No se relee `usageState.value` para
     // republicar: esa propiedad es un binding sobre el mapa de variables
     // globales de PluginService, y republicar a partir de una lectura que
@@ -183,6 +197,34 @@ PluginComponent {
         onTriggered: root.pollStalled()
     }
 
+    // Antirrebote: mientras no esté cargado NO se arranca, porque sondear sin
+    // él repetiría el mismo aviso en cada arranque. Pero tampoco se espera para
+    // siempre —esa es la lección de la ronda 1—, así que a los 10 s se arranca
+    // igual en modo degradado: la píldora sigue viva y las notificaciones se
+    // callan, que es el único reparto posible entre "no quedarse mudo" y "no
+    // hacer spam". Nunca en silencio: las dos salidas dejan aviso.
+    Timer {
+        id: notifyStateRetry
+        interval: 500
+        repeat: true
+        running: false
+        property int attempts: 0
+        onTriggered: {
+            attempts += 1;
+            if (root.loadNotifyState()) {
+                stop();
+                root.maybeStart();
+                return;
+            }
+            if (attempts >= 20) {
+                stop();
+                console.warn("claudeUsage: se arranca SIN antirrebote; las notificaciones quedan suprimidas");
+                root.notifyStateDegraded = true;
+                root.maybeStart();
+            }
+        }
+    }
+
     // ── i18n ─────────────────────────────────────────────────────────────────
 
     // Resuelve un descriptor de logic.js contra el catálogo. Es la única
@@ -254,7 +296,7 @@ PluginComponent {
         if (!root.fallbackCatalog)
             console.warn("claudeUsage: translations/en.json no se pudo leer; el texto saldrá como claves");
         root.catalogsReady = true;
-        root.start();
+        root.maybeStart();
     }
 
     // ── Ajustes ──────────────────────────────────────────────────────────────
@@ -283,24 +325,47 @@ PluginComponent {
     // "Tier 2" de su guía de persistencia—, separado de los ajustes del
     // usuario y con su propio fichero. Las cinco ataduras se colapsan en dos
     // llamadas y el plugin deja de gestionar rutas.
+    // Devuelve si se pudo cargar. La guarda de `pluginService` NO puede callar:
+    // sin él no hay antirrebote, y sondear sin antirrebote repite el mismo
+    // aviso en cada arranque. Quien llama reintenta (notifyStateRetry).
     function loadNotifyState() {
-        if (!root.pluginService)
-            return;
+        if (!root.pluginService) {
+            console.warn("claudeUsage: sin pluginService; el antirrebote no se ha podido cargar");
+            return false;
+        }
         const stored = root.pluginService.loadPluginState(root.pluginId, "notifyState", null);
         if (stored && typeof stored === "object")
             root.notifyState = stored;
+        root.notifyStateLoaded = true;
+        return true;
     }
 
     function saveNotifyState(next) {
-        if (!root.pluginService)
+        if (!root.pluginService) {
+            console.warn("claudeUsage: sin pluginService; el antirrebote no se ha podido persistir");
             return;
+        }
+
         // Solo se escribe si el contenido cambia: el ledger de la Task 10 de
         // Caelestia observó una reescritura por sondeo aunque nada cambiara.
         // DMS agrupa los volcados a disco, pero savePluginState marca el
         // plugin como sucio y rearma su temporizador de escritura en CADA
         // llamada, así que la guarda sigue haciendo falta.
-        if (JSON.stringify(next) === JSON.stringify(root.notifyState))
+        //
+        // Pero se compara contra LO ÚLTIMO QUE ESCRIBIMOS, no contra la copia
+        // en memoria. Comparar contra `notifyState` era un fallo real: en
+        // cuanto el sondeo llega a régimen, `next` y `notifyState` son iguales
+        // en cada vuelta y savePluginState no se vuelve a llamar JAMÁS. Si en
+        // ese momento la copia persistida estuviera ausente o vieja —el fichero
+        // borrado, o la escritura perdida en los 150 ms de rebote de
+        // PluginService al cerrarse el shell—, el daemon no la repararía nunca,
+        // y cada arranque en frío volvería a avisar de lo mismo. Con la marca
+        // arrancando vacía, cada generación del daemon escribe una vez y la
+        // divergencia se repara sola, sin reescribir por sondeo.
+        const encoded = JSON.stringify(next);
+        if (encoded === root.notifyStatePersisted)
             return;
+        root.notifyStatePersisted = encoded;
         root.pluginService.savePluginState(root.pluginId, "notifyState", next);
     }
 
@@ -817,8 +882,15 @@ PluginComponent {
         // el widget, y solo salen de datos de la API: esta rama es la única que
         // las emite, y fallbackToCache nunca llega aquí.
         const result = Logic.notificationsFor(model.limits, threshold, root.notifyState, nowMs);
-        for (let i = 0; i < result.notifications.length; i++)
-            notify(result.notifications[i]);
+        if (root.notifyStateLoaded) {
+            for (let i = 0; i < result.notifications.length; i++)
+                notify(result.notifications[i]);
+        } else if (result.notifications.length > 0) {
+            // Modo degradado. Notificar sin antirrebote cargado repetiría el
+            // mismo aviso en cada arranque, que es justo el fallo que se
+            // reportó; callar es lo correcto, pero nunca en silencio.
+            console.warn("claudeUsage: " + result.notifications.length + " aviso(s) suprimido(s): el antirrebote no está cargado");
+        }
         saveNotifyState(result.nextState);
         root.notifyState = result.nextState;
 
@@ -828,7 +900,18 @@ PluginComponent {
 
     // ── Arranque y refresco manual ───────────────────────────────────────────
 
-    function start() {
+    // Arranca cuando se cumplen las DOS condiciones, venga primero la que
+    // venga: catálogo cargado (sin él el texto saldría en crudo) y antirrebote
+    // resuelto (cargado, o dado por perdido en modo degradado). Es idempotente
+    // porque la llaman los dos caminos.
+    function maybeStart() {
+        if (root.started)
+            return;
+        if (!root.catalogsReady)
+            return;
+        if (!root.notifyStateLoaded && !root.notifyStateDegraded)
+            return;
+        root.started = true;
         publish("loading", null);
         applyCadence(false);
         // Sondeo inmediato: `loading` significa solo "arranque sin intento
@@ -857,9 +940,10 @@ PluginComponent {
         // valor por defecto para siempre. Se comprueba una vez, aquí.
         if (!root.pluginId)
             console.warn("claudeUsage: sin pluginId; el estado no se publicará");
-        loadNotifyState();
-        // Encadena: cuando los catálogos están, catalogLoaded() llama a
-        // start(). Publicar antes enseñaría las claves sin traducir.
+        // El antirrebote ANTES que nada, y si no se puede, se reintenta: el
+        // sondeo no arranca hasta que maybeStart() vea las dos condiciones.
+        if (!loadNotifyState())
+            notifyStateRetry.restart();
         loadCatalogs();
     }
 }
