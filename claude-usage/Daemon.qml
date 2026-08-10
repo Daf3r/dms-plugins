@@ -751,6 +751,31 @@ PluginComponent {
         });
     }
 
+    // La sesión caducada, por sus DOS caminos: el token que ya venció al leer
+    // las credenciales y el 401/403 que responde la API. Uno solo, porque los
+    // dos tienen que publicar exactamente lo mismo.
+    //
+    // Se publica CON el último modelo bueno —igual que antes— para que
+    // `republishFromState()` pueda recomponer el estado cuando cambie un ajuste
+    // sin volver a pedir nada. Lo que se enseña de él lo decide el widget, que
+    // con `expired` colapsa al glifo (ver `hasNumber` en Widget.qml).
+    //
+    // La novedad son `source` y `fetchedAt`: sin ellos `footerLabelFor` no
+    // tenía ninguna de sus dos mitades y el pie del popout salía VACÍO, con lo
+    // que el único estado sin número que no puede resolverse solo —hay que
+    // abrir Claude Code— era también el único que no decía de cuándo es lo
+    // último que se supo. `lastModel` los trae dentro (los pone
+    // `normalizeUsage`), así que no hace falta ninguna clave nueva: el pie sale
+    // «Actualizado hace 8 min» bajo el «Sesión caducada…».
+    function publishExpired() {
+        const model = root.lastModel;
+        if (!model) {
+            publish("expired", null);
+            return;
+        }
+        publish("expired", model, model.source, model.fetchedAt);
+    }
+
     // El spec §7 exige que un refresco bajo demanda no se trague en silencio:
     // si hay una petición en vuelo, el botón del panel tiene que reflejarlo.
     // El estado es UNA sola clave, así que la bandera viaja dentro y cambiar de
@@ -950,7 +975,7 @@ PluginComponent {
             const creds = Logic.parseCredentials(Logic.safeParse(credText), Date.now());
 
             if (creds.status === "expired") {
-                root.publish("expired", root.lastModel);
+                root.publishExpired();
                 root.endPoll();
                 return;
             }
@@ -1016,7 +1041,7 @@ PluginComponent {
         }
 
         if (status === 401 || status === 403) {
-            root.publish("expired", root.lastModel);
+            root.publishExpired();
             root.applyCadence(false);
             root.endPoll();
             return;

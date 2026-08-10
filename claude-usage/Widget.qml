@@ -139,9 +139,37 @@ PluginComponent {
     // `others[0]`: ese respaldo es justo la ambigüedad que se está quitando.
     readonly property var secondary: usage ? usage.weekly : null
 
-    readonly property bool hasNumber: !!primary
+    // «Hay número que pintar». Y la sesión caducada NO lo tiene, aunque el
+    // daemon publique el último modelo bueno.
+    //
+    // `publish("expired", lastModel)` —la ruta del token vencido y la del
+    // 401/403— viaja CON modelo a propósito: el estado tiene que seguir
+    // llevando la última verdad conocida para poder recomponerse cuando cambie
+    // un ajuste. Pero traer el modelo no es lo mismo que poder enseñarlo: con
+    // el token vencido esos números son de hace un rato y ya no se pueden
+    // refrescar, así que pintarlos a brillo pleno es exactamente el «dato viejo
+    // presentado como bueno» que el spec §9 prohíbe.
+    //
+    // Y no es una fila: `hasNumber` gobierna el glifo de estado de las dos
+    // píldoras (`visible: !hasNumber`), la segunda ranura, el punto de
+    // `hiddenWarning`, el bloque de estado del popout —donde vive el
+    // `statusLabel` «Sesión caducada…» que el daemon SÍ calcula— y el desglose.
+    // Con `expired` colándose por aquí se apagaban TODAS a la vez y la píldora
+    // se quedaba con los mismos dos números para siempre, sin una sola señal.
+    //
+    // Es lo que hacía el original: `widget.luau` comprobaba `u.status ==
+    // "expired"` ANTES que `if not u.primary` y salía por `glyphOnly("key-off")`
+    // siempre; `panel.luau` igual. Es también lo que ya afirman README.md
+    // («The pill collapses to a key_off glyph with no number») y el caso 4 de
+    // tests/MANUAL.md.
+    readonly property bool hasNumber: !!primary && usageStatus !== "expired"
     readonly property bool hasSecondary: hasNumber && !!secondary
-    readonly property bool warning: !!(primary && primary.warning) || !!(secondary && secondary.warning)
+
+    // El tinte rojo del fondo se ata a `hasNumber` por el mismo motivo: sin
+    // número que enseñar no hay severidad que señalar, y un candado sobre fondo
+    // rojo diría «estás cerca del límite» sobre un dato que ya no se puede
+    // comprobar. El `glyphOnly` del original tampoco pintaba `fill`.
+    readonly property bool warning: hasNumber && (!!(primary && primary.warning) || !!(secondary && secondary.warning))
     readonly property bool hiddenWarning: !!(usage && usage.hiddenWarning)
 
     // "Píldora atenuada" del spec §9: el dato no viene de un sondeo bueno.
