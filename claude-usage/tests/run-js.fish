@@ -1,7 +1,9 @@
 #!/usr/bin/env fish
 # Lanzador de las pruebas en JavaScript (node --test) de i18n.js y logic.js.
-# TZ fija: sin ella los formatos de hora no son deterministas (igual que en
-# tests/run.fish, el runner de Luau).
+# Es el ÚNICO runner: tests/run.fish, el de Luau, se retiró con los .luau en la
+# tarea 13 del port y solo vive en el historial de git.
+#
+# TZ fija: sin ella los formatos de hora no son deterministas.
 #
 # `node` viene del devshell dms-plugins de ~/nixos-config, que direnv activa
 # al entrar en el proyecto. Fuera de direnv:
