@@ -17,14 +17,14 @@ Es el **tercer destino** del mismo plugin. El diseño no cambia; cambia el shell
   (548 líneas), `service.luau`, `widget.luau`, `panel.luau`, catálogo i18n en dos idiomas
   y once ficheros de test, en quince commits.
 
+- **2026-08-10** — daf3r migra a DMS (ver `~/nixos-config`, rama `dms`). Este documento.
+
 > **Corrección del 2026-08-10.** La primera versión de este documento afirmaba que la
 > implementación de Noctalia no existía, y sobre esa premisa construía una §2 titulada
 > "el puerto a DMS es barato" que daba por hecho copiar el `logic.js` de Caelestia. Era
 > falso: bastaba listar `claude-usage/` en este repo para verlo. El error se detectó al
 > ejecutar la tarea 2 del plan, cuando el subagente encontró la implementación en Luau y
-> preguntó qué hacer con ella. Las secciones 2 y 3 están reescritas; lo que sigue vigente
-> se marca como tal.
-- **2026-08-10** — daf3r migra a DMS (ver `~/nixos-config`, rama `dms`). Este documento.
+> preguntó qué hacer con ella. Las secciones 2 y 3 están reescritas.
 
 **Este documento no repite la spec de Noctalia.** Todo lo que no dependía del shell se
 hereda literal de `2026-08-07-claude-usage-noctalia-design.md`, que se conserva en este
