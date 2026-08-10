@@ -471,6 +471,34 @@ PluginComponent {
         };
     }
 
+    // La SEGUNDA ranura de la píldora, y solo eso: la ventana semanal.
+    //
+    // Es el otro límite primario —`Logic.PRIMARY_KINDS` es exactamente
+    // `["session", "weekly_all"]`— y NO «el más crítico de los demás». La
+    // píldora enseñaba `others[0]`, que hoy coincide con la semanal pero deja
+    // de coincidir en cuanto un sublímite por modelo (p. ej.
+    // `weekly_scoped:Fable`) entra en aviso mientras la semanal sigue normal:
+    // el orden por criticidad lo pondría delante y la semanal desaparecería de
+    // la barra, en el mismo sitio y con la misma pinta, sin ninguna señal.
+    // Los sublímites por modelo no son primarios y su sitio sigue siendo
+    // `hiddenWarning` y el popout.
+    //
+    // Devuelve null si la semanal YA está en la primera ranura. `pickPrimary`
+    // prefiere la sesión, pero si no hay sesión la primaria es la semanal, y
+    // publicarla otra vez pintaría la misma ventana dos veces. Que el campo sea
+    // null en ese caso deja al widget sin ninguna decisión que tomar: «hay
+    // segunda ranura» es exactamente «este campo no es null».
+    function pickWeekly(limits, primaryKey) {
+        if (!limits)
+            return null;
+        for (let i = 0; i < limits.length; i++) {
+            const limit = limits[i];
+            if (limit && limit.key === "weekly_all")
+                return limit.key === primaryKey ? null : limit;
+        }
+        return null;
+    }
+
     // Monta el importe con las piezas que da logic.js: el separador decimal y
     // el lado del símbolo son de la lengua, no del número. En es sale "30,00 $"
     // y en en "$30.00", con el MISMO dato. Estaba en panel.luau, y baja aquí
@@ -558,6 +586,7 @@ PluginComponent {
                 status: status,
                 source: resolvedSource,
                 primary: null,
+                weekly: null,
                 others: [],
                 hiddenWarning: false,
                 extraUsage: null,
@@ -588,6 +617,10 @@ PluginComponent {
             status: status,
             source: resolvedSource,
             primary: decorate(primary, threshold, showRemaining, nowMs),
+            weekly: decorate(pickWeekly(model.limits, primaryKey), threshold, showRemaining, nowMs),
+            // `others` NO cambia: sigue siendo la lista completa y ordenada por
+            // criticidad, que es lo que el popout necesita entera. `weekly` es
+            // una segunda vista sobre el mismo dato, no un recorte de esta.
             others: others,
             hiddenWarning: Logic.hasHiddenWarning(model.limits, primaryKey, threshold),
             extraUsage: decorateExtraUsage(model.extraUsage),

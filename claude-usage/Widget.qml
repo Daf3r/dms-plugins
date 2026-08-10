@@ -55,8 +55,9 @@
 //     ⏳ 44  ·  📅 84
 //
 // La segunda va atenuada para que la jerarquía siga leyéndose de un vistazo.
-// Sigue sin haber cálculo aquí: la primera es `primary` y la segunda es
-// `others[0]`, que el daemon ya ordenó por criticidad.
+// Sigue sin haber cálculo aquí: las dos ranuras son los dos límites primarios
+// (`Logic.PRIMARY_KINDS` = `["session", "weekly_all"]`) y el daemon publica cada
+// uno en su campo, `primary` y `weekly`.
 //
 // `hiddenWarning` NO se retira: los sublímites por modelo siguen sin caber en
 // la barra y son justo lo que ese glifo pequeño existe para delatar.
@@ -116,16 +117,22 @@ PluginComponent {
     // tareas 11-13 de Caelestia).
     readonly property var primary: usage ? usage.primary : null
 
-    // La segunda ventana. `others` lo publica el daemon YA ordenado por
-    // criticidad y sin la primaria dentro (Logic.sortForPanel la excluye), así
-    // que `others[0]` es «la más crítica de las demás» y aquí no se elige nada.
+    // La segunda ventana: la semanal, y la semanal SIEMPRE. Es un campo propio
+    // que publica el daemon, no `others[0]`.
     //
-    // Casi siempre es la semanal, que es el caso que motivó el cambio, pero no
-    // se da por hecho: si un sublímite por modelo fuese más crítico que la
-    // semanal, saldría ese. Es coherente —se enseña lo peor que hay—, y elegir
-    // «la semanal» por tipo sería evaluar aquí, que es justo lo que este
-    // fichero no hace.
-    readonly property var secondary: (usage && usage.others && usage.others.length > 0) ? usage.others[0] : null
+    // La diferencia importa: `others` va ordenado por criticidad, así que
+    // `others[0]` es «la más crítica de las demás». Hoy eso es la semanal, pero
+    // en cuanto un sublímite por modelo entrase en aviso con la semanal
+    // tranquila, la barra pasaría de «📅 84» a «🧩 61» en el mismo sitio y con
+    // el mismo aspecto, y el número que motivó enseñar dos ventanas se iría sin
+    // avisar. Las dos ranuras son los dos límites primarios
+    // (`Logic.PRIMARY_KINDS`) y nada más; los sublímites por modelo se delatan
+    // con `hiddenWarning` y se detallan en el popout.
+    //
+    // Si el daemon lo publica null —no hay semanal, o la semanal ya está en la
+    // primera ranura— la píldora enseña solo la sesión. NO se cae a
+    // `others[0]`: ese respaldo es justo la ambigüedad que se está quitando.
+    readonly property var secondary: usage ? usage.weekly : null
 
     readonly property bool hasNumber: !!primary
     readonly property bool hasSecondary: hasNumber && !!secondary
