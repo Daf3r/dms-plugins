@@ -21,9 +21,13 @@ prueba con `node --test` sin levantar el shell.
   tipo. Verificado el 2026-08-10.
 - **`logic.js` no importa nada del host.** Ninguna tarea puede añadirle un `import` de
   QML, Quickshell ni DMS. Es la propiedad que mantiene la suite ejecutable sin shell.
-- **`logic.js` y `tests/` se copian sin modificar** en la tarea 2. Si una tarea posterior
-  cree necesitar un cambio ahí, para y consulta: es señal de que el port se está
-  desviando del diseño heredado.
+- **`logic.js` se copia sin modificar** en la tarea 2 y **ninguna tarea lo edita**. Si una
+  tarea cree necesitarlo, para y consulta: es señal de que el port se está desviando del
+  diseño heredado. `tests/logic.test.js` tiene **una sola** excepción autorizada, el test
+  de la tarea 8 paso 1b que ata los defaults del panel a las constantes de `logic.js`.
+- **Los pasos marcados 🖐️ los verifica daf3r, no el subagente.** Requieren hacer clic en
+  la GUI o juzgar si algo se ve bien. Al llegar a uno, deja el trabajo commiteado, ponlo
+  en el informe y **para** — no lo des por bueno ni lo marques hecho.
 - **El token OAuth nunca se registra en logs, ni en errores, ni en el estado publicado.**
   Ver §12 de la spec heredada.
 - **Ejecutar los tests siempre con `tests/run.fish`**, nunca `node --test` a pelo: el
@@ -137,7 +141,7 @@ PluginComponent {
 }
 ```
 
-- [ ] **Paso 3: Cargar el plugin y observar**
+- [ ] **Paso 3: 🖐️ Cargar el plugin y observar** (verifica daf3r)
 
 ```bash
 dms ipc plugins rescan
@@ -351,6 +355,21 @@ limite. El id es claudeUsage porque el esquema exige camelCase."
 `Logic.parseRetryAfter`, `Logic.extractCache`, `Logic.safeParse`.
 **Produce:** el global var `usage` poblado con la forma de §4.2 de la spec heredada:
 `{ status, source, primary, others, hiddenWarning, extraUsage, fetchedAtLabel }`.
+
+- [ ] **Paso 0: Declarar los umbrales con los valores de `logic.js`**
+
+`publish()` y `notify()` necesitan estos tres antes de que exista `Settings.qml`. Se
+declaran ya, leyendo las constantes de `logic.js` para no inventar números:
+
+```qml
+    readonly property int threshold: Logic.DEFAULT_WARN_THRESHOLD
+    readonly property int idleInterval: Logic.DEFAULT_IDLE_INTERVAL
+    readonly property int alertInterval: Logic.DEFAULT_ALERT_INTERVAL
+```
+
+La tarea 8 los sustituye por versiones que leen `pluginData`, conservando estos como
+respaldo. **No escribas literales aquí**: 90, 300 y 60 viven en `logic.js` y ese es el
+único sitio donde se cambian.
 
 - [ ] **Paso 1: Leer las credenciales**
 
@@ -585,7 +604,7 @@ PluginComponent {
 El widget **no** llama a `Logic`: lee `percent`, `glyph` y `warning` ya calculados. Si te
 encuentras importando `logic.js` aquí, el estado no trae algo que debería.
 
-- [ ] **Paso 2: Añadir a la barra y verificar**
+- [ ] **Paso 2: 🖐️ Añadir a la barra y verificar** (verifica daf3r)
 
 Ajustes → Dank Bar → Widgets → añadir "Claude Usage" a una sección.
 
@@ -658,7 +677,7 @@ git commit -m "feat(claude-usage): pildora de barra horizontal y vertical"
     }
 ```
 
-- [ ] **Paso 2: Verificar los siete estados**
+- [ ] **Paso 2: 🖐️ Verificar los siete estados** (verifica daf3r)
 
 Haz la misma pasada manual que `docs/superpowers/notes/` registra para Caelestia: `ok`,
 `stale`, `expired`, `missing`, `loading`, un 429 y un aviso. Fuerza `missing` renombrando
@@ -714,7 +733,7 @@ En `popoutContent`, sustituye el primer `StyledText` por:
 
 Añade `import "components"` arriba del fichero.
 
-- [ ] **Paso 4: Verificar y commitear**
+- [ ] **Paso 4: 🖐️ Verificar el anillo y commitear** (verifica daf3r)
 
 Abre el popout: el anillo debe pintar el porcentaje y cambiar de forma según la ventana.
 
@@ -732,22 +751,117 @@ git commit -m "feat(claude-usage): recuperar el UsageRing que Noctalia no podia 
 - Modificar: `claude-usage/Daemon.qml`
 
 **Consume:** `pluginData` reactivo.
-**Produce:** `threshold` (entero, por defecto 80) y `notifications` (bool, por defecto
-`true`), leídos por el daemon.
+**Produce:** los seis ajustes de §10, leídos por el daemon con estos nombres exactos:
+`warn_threshold`, `idle_interval`, `alert_interval`, `show_scoped_limits`,
+`show_extra_usage`, `show_remaining`.
+
+Los defaults **deben coincidir con las constantes exportadas por `logic.js`**:
+`DEFAULT_WARN_THRESHOLD = 90`, `DEFAULT_IDLE_INTERVAL = 300`,
+`DEFAULT_ALERT_INTERVAL = 60`. §10 de la spec heredada llama a esa duplicación conocida y
+aceptada, y exige un test que compare ambos lados — en DMS la copia vive en `Settings.qml`
+en lugar del manifiesto, porque aquí los ajustes no se declaran en `plugin.json`.
+
+**No hay ajuste de "activar notificaciones".** §10 lista seis y ninguno lo es; el control
+de repetición es el antirrebote de `notificationsFor`, no un interruptor.
 
 - [ ] **Paso 1: Escribir el panel**
 
-Implementa los ajustes de §10 de la spec heredada con los componentes de ajustes de DMS
-(ver `settings-components-reference.md` en la skill de upstream). Mínimo: umbral de aviso
-y activar/desactivar notificaciones.
+`claude-usage/Settings.qml`:
+
+```qml
+import QtQuick
+import qs.Common
+import qs.Widgets
+import qs.Modules.Plugins
+
+PluginSettings {
+    pluginId: "claudeUsage"
+
+    SliderSetting {
+        settingKey: "warn_threshold"
+        label: "Umbral de aviso"
+        description: "Porcentaje a partir del cual una ventana se considera en aviso"
+        minimum: 50
+        maximum: 99
+        defaultValue: 90
+    }
+
+    SliderSetting {
+        settingKey: "idle_interval"
+        label: "Intervalo en reposo (s)"
+        description: "Cada cuanto se consulta el uso cuando nada esta en aviso"
+        minimum: 60
+        maximum: 3600
+        defaultValue: 300
+    }
+
+    SliderSetting {
+        settingKey: "alert_interval"
+        label: "Intervalo en alerta (s)"
+        description: "Cada cuanto se consulta cuando alguna ventana esta en aviso"
+        minimum: 15
+        maximum: 600
+        defaultValue: 60
+    }
+
+    ToggleSetting {
+        settingKey: "show_scoped_limits"
+        label: "Mostrar limites por modelo"
+        description: "Incluye las ventanas de Opus y Sonnet en el desglose"
+        defaultValue: true
+    }
+
+    ToggleSetting {
+        settingKey: "show_extra_usage"
+        label: "Mostrar consumo extra"
+        description: "Muestra el gasto fuera de la suscripcion"
+        defaultValue: true
+    }
+
+    ToggleSetting {
+        settingKey: "show_remaining"
+        label: "Mostrar restante en vez de consumido"
+        description: "Invierte el porcentaje: 20%% restante en lugar de 80%% consumido"
+        defaultValue: false
+    }
+}
+```
+
+- [ ] **Paso 1b: Test que ata los defaults a `logic.js`**
+
+Añade a `claude-usage/tests/logic.test.js` — es la **única** edición de ese fichero que
+este plan autoriza, y §10 la exige explícitamente:
+
+```js
+test("los defaults de Settings.qml coinciden con las constantes de logic.js", () => {
+    const qml = readFileSync(join(__dirname, "..", "Settings.qml"), "utf8");
+    const defaultOf = (key) => {
+        const block = qml.split(`settingKey: "${key}"`)[1];
+        return Number(block.match(/defaultValue:\s*(\d+)/)[1]);
+    };
+    assert.equal(defaultOf("warn_threshold"), logic.DEFAULT_WARN_THRESHOLD);
+    assert.equal(defaultOf("idle_interval"), logic.DEFAULT_IDLE_INTERVAL);
+    assert.equal(defaultOf("alert_interval"), logic.DEFAULT_ALERT_INTERVAL);
+});
+```
+
+Córrelo con `./tests/run.fish`. Esperado: **70 tests en verde**.
 
 - [ ] **Paso 2: Leerlos en el daemon**
 
 ```qml
-    readonly property int threshold: pluginData?.threshold !== undefined
-                                     ? pluginData.threshold : 80
-    readonly property bool notificationsOn: pluginData?.notifications !== undefined
-                                            ? pluginData.notifications : true
+    readonly property int threshold: pluginData?.warn_threshold !== undefined
+                                     ? pluginData.warn_threshold
+                                     : Logic.DEFAULT_WARN_THRESHOLD
+    readonly property int idleInterval: pluginData?.idle_interval !== undefined
+                                        ? pluginData.idle_interval
+                                        : Logic.DEFAULT_IDLE_INTERVAL
+    readonly property int alertInterval: pluginData?.alert_interval !== undefined
+                                         ? pluginData.alert_interval
+                                         : Logic.DEFAULT_ALERT_INTERVAL
+    readonly property bool showScoped: pluginData?.show_scoped_limits !== false
+    readonly property bool showExtra: pluginData?.show_extra_usage !== false
+    readonly property bool showRemaining: pluginData?.show_remaining === true
 
     Connections {
         target: pluginService
@@ -761,7 +875,7 @@ y activar/desactivar notificaciones.
 Cambiar el umbral **recalcula el estado sin volver a sondear**: `isWarning` es lógica
 pura y no necesita red.
 
-- [ ] **Paso 3: Verificar y commitear**
+- [ ] **Paso 3: 🖐️ Verificar y commitear** (verifica daf3r)
 
 Baja el umbral por debajo del porcentaje actual: la píldora debe ponerse en aviso al
 instante, sin esperar al siguiente sondeo.
@@ -786,7 +900,6 @@ git commit -m "feat(claude-usage): panel de ajustes con umbral y notificaciones"
     property var prevState: null
 
     function notify(model) {
-        if (!root.notificationsOn) return
         var pending = Logic.notificationsFor(model.limits, root.threshold,
                                              root.prevState, Date.now())
         for (var i = 0; i < pending.length; i++)
