@@ -45,6 +45,22 @@
 //
 // ── Lo que la traducción cambia de forma, y por qué ──────────────────────────
 //
+// **DOS ventanas, no una.** El original enseñaba solo la más crítica, y en la
+// barra de daf3r eso significó ver la sesión al 44 % mientras la semanal iba al
+// 84 %: el número que decide si podrá trabajar el resto de la semana no
+// aparecía por ningún lado. `hiddenWarning` no lo tapaba, porque solo salta al
+// CRUZAR el umbral de aviso (90 por defecto), así que entre 0 y 90 la semanal
+// era invisible. Se pintan las dos, cada una con su glifo y su porcentaje:
+//
+//     ⏳ 44  ·  📅 84
+//
+// La segunda va atenuada para que la jerarquía siga leyéndose de un vistazo.
+// Sigue sin haber cálculo aquí: la primera es `primary` y la segunda es
+// `others[0]`, que el daemon ya ordenó por criticidad.
+//
+// `hiddenWarning` NO se retira: los sublímites por modelo siguen sin caber en
+// la barra y son justo lo que ese glifo pequeño existe para delatar.
+//
 // **Los glifos.** Noctalia traía su propio juego de iconos; DMS usa Material
 // Symbols, donde `gauge`, `key-off`, `cloud-off` y `alert-circle` no existen con
 // ese nombre. Se comprobaron uno a uno contra el fichero .codepoints de la
@@ -63,7 +79,7 @@
 //
 // **El ancho del número es fijo.** `StyledTextMetrics` con "100" de referencia,
 // copiado de CpuMonitor: sin eso la barra entera se desplaza cada vez que el
-// porcentaje pasa de una cifra a dos.
+// porcentaje pasa de una cifra a dos. Con dos ventanas importa el doble.
 
 import QtQuick
 import qs.Common
@@ -99,16 +115,29 @@ PluginComponent {
     // dice con un glifo, no se pinta un cero (spec §9, carry-forward de las
     // tareas 11-13 de Caelestia).
     readonly property var primary: usage ? usage.primary : null
+
+    // La segunda ventana. `others` lo publica el daemon YA ordenado por
+    // criticidad y sin la primaria dentro (Logic.sortForPanel la excluye), así
+    // que `others[0]` es «la más crítica de las demás» y aquí no se elige nada.
+    //
+    // Casi siempre es la semanal, que es el caso que motivó el cambio, pero no
+    // se da por hecho: si un sublímite por modelo fuese más crítico que la
+    // semanal, saldría ese. Es coherente —se enseña lo peor que hay—, y elegir
+    // «la semanal» por tipo sería evaluar aquí, que es justo lo que este
+    // fichero no hace.
+    readonly property var secondary: (usage && usage.others && usage.others.length > 0) ? usage.others[0] : null
+
     readonly property bool hasNumber: !!primary
-    readonly property bool warning: !!(primary && primary.warning)
+    readonly property bool hasSecondary: hasNumber && !!secondary
+    readonly property bool warning: !!(primary && primary.warning) || !!(secondary && secondary.warning)
     readonly property bool hiddenWarning: !!(usage && usage.hiddenWarning)
 
     // "Píldora atenuada" del spec §9: el dato no viene de un sondeo bueno.
     readonly property bool dimmed: usageStatus === "stale"
 
-    // El glifo de los estados sin número. El de la píldora normal lo trae el
-    // daemon dentro de `primary.glyph` (hourglass_empty / calendar_month), que
-    // es lo que codifica QUÉ ventana se está enseñando.
+    // El glifo de los estados sin número. El de cada ventana lo trae el daemon
+    // dentro de `glyph` (hourglass_empty / calendar_month), que es lo que
+    // codifica QUÉ ventana se está enseñando.
     readonly property string stateGlyph: {
         if (usageStatus === "expired")
             return "key_off";
@@ -117,22 +146,52 @@ PluginComponent {
         return "cloud_off";
     }
 
-    readonly property string glyph: hasNumber ? primary.glyph : stateGlyph
-    readonly property string percentText: hasNumber ? String(primary.percent) : ""
-
+    // ── Color ────────────────────────────────────────────────────────────────
     // Severidad e identidad de ventana viajan por canales distintos —color y
     // glifo—, que es la propiedad que protegía el anillo del diseño original.
     //
-    // El atenuado es SUFIJO ALFA sobre el mismo color, no un color distinto:
-    // bajo un esquema monocromo varios roles Material colapsan en el mismo gris
-    // y cambiar de rol no atenuaría nada. 0.7 y no menos: por debajo se queda
-    // por debajo de AA para un número pequeño.
-    function attenuate(c) {
-        return root.dimmed ? Theme.withAlpha(c, 0.7) : c;
+    // Atenuar es SUFIJO ALFA sobre el mismo rol, nunca cambiar de rol: bajo un
+    // esquema monocromo varios roles Material colapsan en el mismo gris
+    // (on_surface_variant y secondary dan los dos #C6C6C6 en m3-monochrome) y
+    // cambiar de rol no pintaría absolutamente nada. Con el alfa, el hue queda
+    // libre para la severidad y las dos señales siguen siendo ortogonales:
+    // la segunda ventana en aviso sale roja Y atenuada.
+    //
+    // 0.7 y no menos: sobre el fondo de la barra da ~5:1, que pasa AA. 0.55 se
+    // queda en 3.6:1, ilegible de reojo para un número pequeño.
+    //
+    // Los dos motivos de atenuación —dato viejo y segunda ventana— usan el
+    // MISMO 0.7 y no se acumulan. Encadenarlos daría 0.49, por debajo del
+    // umbral legible; el precio es que con el dato viejo las dos ventanas se
+    // ven igual de atenuadas y esa jerarquía se pierde mientras dure.
+    readonly property real attenuatedAlpha: 0.7
+
+    function alphaFor(muted) {
+        return (root.dimmed || muted) ? root.attenuatedAlpha : 1.0;
     }
 
-    readonly property color glyphColor: hasNumber ? attenuate(warning ? Theme.error : Theme.widgetIconColor) : Theme.surfaceVariantText
-    readonly property color textColor: hasNumber ? attenuate(warning ? Theme.error : Theme.widgetTextColor) : Theme.surfaceVariantText
+    function attenuate(c) {
+        return root.dimmed ? Theme.withAlpha(c, root.attenuatedAlpha) : c;
+    }
+
+    // `limit` es una ventana ya decorada por el daemon; `muted` marca la
+    // segunda. El color base del icono y el del texto NO son el mismo rol: en
+    // el modo "colorful" de DMS el texto va en `primary` y el icono en
+    // `surfaceText`.
+    function windowIconColor(limit, muted) {
+        const base = (limit && limit.warning) ? Theme.error : Theme.widgetIconColor;
+        const a = root.alphaFor(muted);
+        return a < 1.0 ? Theme.withAlpha(base, a) : base;
+    }
+
+    function windowTextColor(limit, muted) {
+        const base = (limit && limit.warning) ? Theme.error : Theme.widgetTextColor;
+        const a = root.alphaFor(muted);
+        return a < 1.0 ? Theme.withAlpha(base, a) : base;
+    }
+
+    readonly property int pillIconSize: Theme.barIconSize(barThickness, undefined, root.barConfig?.maximizeWidgetIcons, root.barConfig?.iconScale)
+    readonly property int pillTextSize: Theme.barTextSize(barThickness, root.barConfig?.fontScale, root.barConfig?.maximizeWidgetText)
 
     // ── Visibilidad ──────────────────────────────────────────────────────────
     // Sin credenciales el widget se oculta POR COMPLETO (spec §9). Es el ÚNICO
@@ -147,6 +206,89 @@ PluginComponent {
     readonly property bool pillHidden: !usage || usageStatus === "missing"
     onPillHiddenChanged: root.setVisibilityOverride(!root.pillHidden)
     Component.onCompleted: root.setVisibilityOverride(!root.pillHidden)
+
+    // ── El grupo «una ventana» ───────────────────────────────────────────────
+    // Glifo + porcentaje, que es la unidad que se repite dos veces y en las dos
+    // orientaciones. Como componente en línea y no copiado cuatro veces: si las
+    // dos ventanas no reciben EXACTAMENTE el mismo trato, la comparación de un
+    // vistazo —que es para lo que existe la píldora— deja de ser honesta.
+    //
+    // El ancho del número se fija con "100" de referencia para que la barra no
+    // baile al pasar de una cifra a dos.
+    // Nada de leer `root` desde dentro: un componente en línea NO ve los ids
+    // del documento que lo contiene. Todo lo que necesita entra por
+    // propiedades, y quien las rellena es el sitio de uso, que sí ve `root`.
+    component WindowChunk: Row {
+        id: chunk
+
+        required property var limit
+        required property color iconColor
+        required property color textColor
+        required property int iconSize
+        required property int textSize
+
+        spacing: Theme.spacingXS
+        visible: !!limit
+
+        DankIcon {
+            name: chunk.limit ? chunk.limit.glyph : ""
+            size: chunk.iconSize
+            color: chunk.iconColor
+            anchors.verticalCenter: parent.verticalCenter
+        }
+
+        Item {
+            width: Math.max(baseline.width, number.implicitWidth)
+            height: number.implicitHeight
+            anchors.verticalCenter: parent.verticalCenter
+
+            StyledTextMetrics {
+                id: baseline
+                font.pixelSize: chunk.textSize
+                font.weight: Font.Bold
+                text: "100"
+            }
+
+            StyledText {
+                id: number
+                anchors.centerIn: parent
+                text: chunk.limit ? String(chunk.limit.percent) : ""
+                color: chunk.textColor
+                font.pixelSize: chunk.textSize
+                font.weight: Font.Bold
+            }
+        }
+    }
+
+    // La versión apilada, para la barra vertical. Mismo contenido y mismos
+    // colores; solo cambia el eje.
+    component WindowChunkStacked: Column {
+        id: stack
+
+        required property var limit
+        required property color iconColor
+        required property color textColor
+        required property int iconSize
+        required property int textSize
+
+        spacing: 1
+        visible: !!limit
+
+        DankIcon {
+            name: stack.limit ? stack.limit.glyph : ""
+            size: stack.iconSize
+            color: stack.iconColor
+            anchors.horizontalCenter: parent.horizontalCenter
+        }
+
+        StyledText {
+            text: stack.limit ? String(stack.limit.percent) : ""
+            color: stack.textColor
+            font.pixelSize: stack.textSize
+            font.weight: Font.Bold
+            anchors.horizontalCenter: parent.horizontalCenter
+        }
+    }
 
     // ── Píldora horizontal ───────────────────────────────────────────────────
     // BasePill ya pinta el fondo, el borde y el ripple de la píldora, y coloca
@@ -174,46 +316,53 @@ PluginComponent {
                 anchors.centerIn: parent
                 spacing: Theme.spacingXS
 
+                // Los estados sin número (cargando, caducado, sin conexión) son
+                // un glifo y nada más, igual que en el original.
                 DankIcon {
-                    name: root.glyph
-                    size: Theme.barIconSize(root.barThickness, undefined, root.barConfig?.maximizeWidgetIcons, root.barConfig?.iconScale)
-                    color: root.glyphColor
+                    visible: !root.hasNumber
+                    name: root.stateGlyph
+                    size: root.pillIconSize
+                    color: Theme.surfaceVariantText
                     anchors.verticalCenter: parent.verticalCenter
                 }
 
-                // Ancho fijo con "100" de referencia: el número cambia de una a
-                // tres cifras y la barra no debe moverse por eso.
-                Item {
-                    visible: root.hasNumber
-                    width: visible ? Math.max(hBaseline.width, hNumber.implicitWidth) : 0
-                    height: hNumber.implicitHeight
+                WindowChunk {
+                    limit: root.hasNumber ? root.primary : null
+                    iconColor: root.windowIconColor(root.primary, false)
+                    textColor: root.windowTextColor(root.primary, false)
+                    iconSize: root.pillIconSize
+                    textSize: root.pillTextSize
                     anchors.verticalCenter: parent.verticalCenter
+                }
 
-                    StyledTextMetrics {
-                        id: hBaseline
-                        font.pixelSize: Theme.barTextSize(root.barThickness, root.barConfig?.fontScale, root.barConfig?.maximizeWidgetText)
-                        font.weight: Font.Bold
-                        text: "100"
-                    }
+                // Puntuación, no una frase: separa los dos pares para que
+                // «⏳ 44 📅 84» no se lea como un solo número partido. Se va
+                // entero con la segunda ventana, sin dejar un separador
+                // colgando.
+                StyledText {
+                    visible: root.hasSecondary
+                    text: "·"
+                    color: Theme.withAlpha(Theme.surfaceVariantText, root.attenuatedAlpha)
+                    font.pixelSize: root.pillTextSize
+                    anchors.verticalCenter: parent.verticalCenter
+                }
 
-                    StyledText {
-                        id: hNumber
-                        anchors.centerIn: parent
-                        text: root.percentText
-                        color: root.textColor
-                        font.pixelSize: Theme.barTextSize(root.barThickness, root.barConfig?.fontScale, root.barConfig?.maximizeWidgetText)
-                        font.weight: Font.Bold
-                    }
+                WindowChunk {
+                    limit: root.hasSecondary ? root.secondary : null
+                    iconColor: root.windowIconColor(root.secondary, true)
+                    textColor: root.windowTextColor(root.secondary, true)
+                    iconSize: root.pillIconSize
+                    textSize: root.pillTextSize
+                    anchors.verticalCenter: parent.verticalCenter
                 }
 
                 // El equivalente del punto de 4 px del original: la única forma
                 // de que un sublímite por modelo al 95 % no pase desapercibido,
-                // dado que el glifo grande solo puede representar la ventana que
-                // se está enseñando.
+                // dado que en la píldora solo caben dos ventanas.
                 DankIcon {
                     visible: root.hiddenWarning && root.hasNumber
                     name: "error"
-                    size: Math.round(Theme.barIconSize(root.barThickness, undefined, root.barConfig?.maximizeWidgetIcons, root.barConfig?.iconScale) * 0.65)
+                    size: Math.round(root.pillIconSize * 0.65)
                     color: root.attenuate(Theme.error)
                     anchors.verticalCenter: parent.verticalCenter
                 }
@@ -223,7 +372,8 @@ PluginComponent {
 
     // ── Píldora vertical ─────────────────────────────────────────────────────
     // Misma información apilada. En vertical BasePill fija el ancho al grosor
-    // del widget y solo mide el alto implícito.
+    // del widget y solo mide el alto implícito, así que lo que hay que vigilar
+    // aquí es el ALTO: dos ventanas ocupan el doble que una.
     verticalBarPill: Component {
         Item {
             implicitWidth: vColumn.implicitWidth
@@ -241,28 +391,49 @@ PluginComponent {
             Column {
                 id: vColumn
                 anchors.centerIn: parent
-                spacing: 1
+                spacing: Theme.spacingXS
 
                 DankIcon {
-                    name: root.glyph
-                    size: Theme.barIconSize(root.barThickness, undefined, root.barConfig?.maximizeWidgetIcons, root.barConfig?.iconScale)
-                    color: root.glyphColor
+                    visible: !root.hasNumber
+                    name: root.stateGlyph
+                    size: root.pillIconSize
+                    color: Theme.surfaceVariantText
                     anchors.horizontalCenter: parent.horizontalCenter
                 }
 
-                StyledText {
-                    visible: root.hasNumber
-                    text: root.percentText
-                    color: root.textColor
-                    font.pixelSize: Theme.barTextSize(root.barThickness, root.barConfig?.fontScale, root.barConfig?.maximizeWidgetText)
-                    font.weight: Font.Bold
+                WindowChunkStacked {
+                    limit: root.hasNumber ? root.primary : null
+                    iconColor: root.windowIconColor(root.primary, false)
+                    textColor: root.windowTextColor(root.primary, false)
+                    iconSize: root.pillIconSize
+                    textSize: root.pillTextSize
+                    anchors.horizontalCenter: parent.horizontalCenter
+                }
+
+                // En vertical el separador es una línea, no un punto: un «·»
+                // entre dos bloques apilados se lee como suciedad, y una regla
+                // fina dice «hasta aquí una ventana» sin gastar altura.
+                Rectangle {
+                    visible: root.hasSecondary
+                    width: Math.round(root.pillIconSize * 0.8)
+                    height: 1
+                    color: Theme.withAlpha(Theme.surfaceVariantText, root.attenuatedAlpha)
+                    anchors.horizontalCenter: parent.horizontalCenter
+                }
+
+                WindowChunkStacked {
+                    limit: root.hasSecondary ? root.secondary : null
+                    iconColor: root.windowIconColor(root.secondary, true)
+                    textColor: root.windowTextColor(root.secondary, true)
+                    iconSize: root.pillIconSize
+                    textSize: root.pillTextSize
                     anchors.horizontalCenter: parent.horizontalCenter
                 }
 
                 DankIcon {
                     visible: root.hiddenWarning && root.hasNumber
                     name: "error"
-                    size: Math.round(Theme.barIconSize(root.barThickness, undefined, root.barConfig?.maximizeWidgetIcons, root.barConfig?.iconScale) * 0.65)
+                    size: Math.round(root.pillIconSize * 0.65)
                     color: root.attenuate(Theme.error)
                     anchors.horizontalCenter: parent.horizontalCenter
                 }
