@@ -359,12 +359,47 @@ PluginComponent {
     // dentro de cinco minutos.
     //
     // NINGUNA PETICIÓN sale de aquí: se recalcula desde `lastPublishArgs`, que
-    // es lo último que se publicó. La cadencia (idle_interval/alert_interval) no
-    // se toca: la recoge el siguiente applyCadence, y rearmar el temporizador en
-    // cada arrastre del deslizador sería peor.
+    // es lo último que se publicó.
+    //
+    // PERO NO SE APLICA EN EL ACTO, y ese es el motivo de settingsSettle: este
+    // evento NO es "el usuario cambió un ajuste", es "DankSlider movió el
+    // ratón". `DankSlider` emite en cada onPositionChanged, no al soltar, así
+    // que arrastrar el umbral de 99 a 50 dispara del orden de cincuenta
+    // eventos, y cada uno cuesta una republicación ENTERA —sortForPanel,
+    // decorate de cada límite con tres render() dentro, y un setGlobalVar que
+    // reevalúa los bindings de las dos píldoras (una por pantalla) y del popout
+    // abierto—. Se coalesce y se aplica una sola vez, cuando el arrastre para.
+    //
+    // La cadencia (idle_interval/alert_interval) sigue SIN tocarse aquí, ni
+    // siquiera coalescida, y ahora por un motivo que no es el coste:
+    // applyCadence reprograma el temporizador de sondeo, o sea que adelantaría
+    // o retrasaría la próxima PETICIÓN. Cambiar el intervalo se nota en la
+    // vuelta siguiente, que es cuando toca, y no cuesta nada al usuario.
     onPluginDataChanged: {
         if (!root.started)
             return;
+        settingsSettle.restart();
+    }
+
+    // El retardo se elige por percepción, no por ahorro: 150 ms desde el ÚLTIMO
+    // evento está por debajo del umbral en el que una interfaz deja de parecer
+    // instantánea, así que soltar el deslizador y ver reaccionar la píldora
+    // sigue siendo un solo gesto. Es además el mismo número con el que
+    // PluginService de DMS agrupa sus escrituras, así que el ajuste ni siquiera
+    // está en disco antes.
+    //
+    // Un cambio de idioma es un evento ÚNICO (el desplegable no emite mientras
+    // se arrastra nada), así que pasa por aquí una sola vez y llega 150 ms
+    // después: ni se pierde —restart() siempre acaba disparando— ni se nota.
+    Timer {
+        id: settingsSettle
+
+        interval: 150
+        repeat: false
+        onTriggered: root.applySettings()
+    }
+
+    function applySettings() {
         if (localeLanguage() !== root.activeLanguage) {
             // reloadCatalogs() republica cuando el catálogo nuevo llega.
             reloadCatalogs();
