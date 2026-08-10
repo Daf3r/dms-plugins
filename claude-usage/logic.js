@@ -27,9 +27,10 @@
 // queda reservado a "esta propiedad no existe".
 //
 // TRADUCCIÓN: este fichero cubre los helpers puros de formato (tarea 3 del
-// plan). El resto de logic.luau — normalizeUsage, pickPrimary, nextInterval,
-// parseCredentials, notificationsFor… — llega en tareas posteriores. Hasta
-// entonces logic.luau sigue siendo la fuente y no se borra.
+// plan) y la normalización del payload más el orden del panel (tarea 4). El
+// resto de logic.luau — nextInterval, parseCredentials, notificationsFor… —
+// llega en tareas posteriores. Hasta entonces logic.luau sigue siendo la
+// fuente y no se borra.
 
 // ---------------------------------------------------------------------------
 // Guardas de tipo
@@ -253,6 +254,281 @@ function describeMoney(amountMinor, exponent, currency) {
     return { whole: m[1], cents: m[2], symbol: symbol };
 }
 
+// ---------------------------------------------------------------------------
+// Semántica de Lua que no se traduce sola
+// ---------------------------------------------------------------------------
+
+// En Lua SOLO `nil` y `false` son falsy: el 0 y la cadena vacía son
+// verdaderos. `not not v` del original NO es `!!v` aquí — con `is_enabled: 0`
+// el original diría `true` y `!!0` diría `false`. Este helper conserva la
+// semántica exacta del `not not`.
+function luaTruthy(v) {
+    return v !== false && v !== null && v !== undefined;
+}
+
+// `math.round` de Luau redondea el 0.5 ALEJÁNDOSE del cero; `Math.round` de
+// JavaScript lo redondea siempre hacia +∞ (Math.round(-0.5) es -0, y
+// math.round(-0.5) es -1). Con porcentajes y créditos, que no son negativos,
+// no hay diferencia observable — pero el port no depende de esa suposición.
+function round(v) {
+    return v < 0 ? -Math.round(-v) : Math.round(v);
+}
+
+// `type(x) == "table"` del original. En JS hay que descartar null a mano
+// (typeof null es "object") y los arrays cuentan como tabla, igual que en Lua.
+function isTable(v) {
+    return v !== null && typeof v === "object";
+}
+
+// ---------------------------------------------------------------------------
+// Severidad y etiquetas
+// ---------------------------------------------------------------------------
+
+// Una severidad que no conocemos se trata como la más grave: si Anthropic
+// añade un estado nuevo, preferimos un falso rojo a un silencio.
+var SEVERITY_RANK = { normal: 0, warning: 1, critical: 2 };
+
+// El rango de "normal" es 0, que es FALSY en JS: un `rank || 2` convertiría
+// todo lo normal en crítico. La comprobación es por tipo, y de paso descarta
+// lo que herede el objeto ("constructor", "toString"…), que en Lua no existe
+// porque la tabla no tiene metatabla.
+function severityRank(severity) {
+    var rank = typeof severity === "string" ? SEVERITY_RANK[severity] : undefined;
+    return typeof rank === "number" ? rank : 2;
+}
+
+// Un DESCRIPTOR, no una cadena (ver la sección de descriptores): `{ key,
+// params }` para lo traducible y `{ text }` para lo que no lo es.
+function labelDescriptor(kind, scopeName) {
+    if (kind === "session") return { key: "limit.session" };
+    if (kind === "weekly_all") return { key: "limit.weeklyAll" };
+    if (kind === "weekly_scoped") {
+        // `if scopeName then` en Lua acepta la cadena vacía; un `if (scopeName)`
+        // aquí la rechazaría y el port dejaría de ser equivalente.
+        return typeof scopeName === "string"
+            ? { key: "limit.weeklyScoped", params: { model: scopeName } }
+            : { key: "limit.weeklyScopedGeneric" };
+    }
+    // Una clase que no conocemos se pinta cruda antes que traducida a medias: si
+    // Anthropic añade un `kind`, el usuario ve su nombre y no una clave rota.
+    return { text: kind };
+}
+
+var PRIMARY_KINDS = ["session", "weekly_all"];
+
+function isPrimaryKind(kind) {
+    for (var i = 0; i < PRIMARY_KINDS.length; i++) {
+        if (PRIMARY_KINDS[i] === kind) return true;
+    }
+    return false;
+}
+
+// ---------------------------------------------------------------------------
+// Normalización del payload
+// ---------------------------------------------------------------------------
+
+function scopeNameOf(limit) {
+    if (!isTable(limit)) return null;
+    var scope = limit.scope;
+    if (!isTable(scope)) return null;
+    var model = scope.model;
+    if (!isTable(model)) return null;
+    var name = model.display_name;
+    return (typeof name === "string" && name !== "") ? name : null;
+}
+
+// Misma trampa que en labelDescriptor: la cadena vacía es un scope válido para
+// el original y produce la clave "kind:".
+function limitKey(kind, scopeName) {
+    return typeof scopeName === "string" ? kind + ":" + scopeName : kind;
+}
+
+// `spend` es la fuente preferida: trae importes en unidades menores y
+// exponente explícito. `extra_usage` da los créditos en decimal y hay que
+// convertirlos.
+function normalizeExtraUsage(payload) {
+    var extra = payload.extra_usage;
+    var spend = payload.spend;
+    if (!isTable(extra) && !isTable(spend)) return null;
+
+    if (isTable(spend) && isTable(spend.used) && isTable(spend.limit)) {
+        return {
+            enabled: luaTruthy(spend.enabled),
+            everEnabled: isTable(extra) ? luaTruthy(extra.credits_ever_enabled) : true,
+            usedMinor: num(spend.used.amount_minor, 0),
+            limitMinor: num(spend.limit.amount_minor, 0),
+            currency: typeof spend.used.currency === "string"
+                ? spend.used.currency : "USD",
+            exponent: num(spend.used.exponent, 2),
+            percent: round(num(spend.percent, 0)),
+            // Una clave ausente es `undefined`; la ausencia de este módulo es
+            // null (ver la cabecera).
+            disabledReason: spend.disabled_reason === undefined
+                ? null : spend.disabled_reason
+        };
+    }
+
+    if (!isTable(extra)) return null;
+
+    var exponent = num(extra.decimal_places, 2);
+    var factor = Math.pow(10, exponent);
+    return {
+        enabled: luaTruthy(extra.is_enabled),
+        everEnabled: luaTruthy(extra.credits_ever_enabled),
+        usedMinor: round(num(extra.used_credits, 0) * factor),
+        limitMinor: round(num(extra.monthly_limit, 0)),
+        currency: typeof extra.currency === "string" ? extra.currency : "USD",
+        exponent: exponent,
+        percent: round(num(extra.utilization, 0)),
+        disabledReason: extra.disabled_reason === undefined
+            ? null : extra.disabled_reason
+    };
+}
+
+function normalizeUsage(payload, source, fetchedAtMs) {
+    var result = {
+        limits: [],
+        source: source,
+        fetchedAt: fetchedAtMs === undefined ? null : fetchedAtMs,
+        // Presente desde el principio y con valor null: quien reciba la forma
+        // vacía tiene que poder comparar `extraUsage === null` sin distinguir
+        // entre "no hay" y "la propiedad no existe".
+        extraUsage: null
+    };
+    if (!isTable(payload)) return result;
+
+    var raw = payload.limits;
+    // `#raw > 0` del original. Un objeto que no sea lista da longitud 0 en Luau
+    // y cae al legado igual que aquí.
+    if (Array.isArray(raw) && raw.length > 0) {
+        for (var i = 0; i < raw.length; i++) {
+            var item = raw[i];
+            var scopeName = scopeNameOf(item);
+            result.limits.push({
+                key: limitKey(item.kind, scopeName),
+                label: labelDescriptor(item.kind, scopeName),
+                percent: round(num(item.percent, 0)),
+                severity: typeof item.severity === "string" ? item.severity : "normal",
+                resetsAt: parseIsoMs(item.resets_at),
+                scope: scopeName,
+                primary: isPrimaryKind(item.kind)
+            });
+        }
+    } else {
+        // Sin limits[], los objetos sueltos son la única fuente. No traen
+        // severidad, así que el estado de aviso lo decide el umbral local.
+        var legacy = [
+            { kind: "session", data: payload.five_hour },
+            { kind: "weekly_all", data: payload.seven_day }
+        ];
+        for (var j = 0; j < legacy.length; j++) {
+            var entry = legacy[j];
+            if (!isTable(entry.data)) continue;
+            result.limits.push({
+                key: entry.kind,
+                label: labelDescriptor(entry.kind, null),
+                percent: round(num(entry.data.utilization, 0)),
+                severity: "normal",
+                resetsAt: parseIsoMs(entry.data.resets_at),
+                scope: null,
+                primary: true
+            });
+        }
+    }
+
+    result.extraUsage = normalizeExtraUsage(payload);
+    return result;
+}
+
+// ---------------------------------------------------------------------------
+// Aviso y orden
+// ---------------------------------------------------------------------------
+
+// Definición única de "estar cerca del límite". La usan el color del widget,
+// el glifo indicador, la cadencia de alerta y la notificación.
+function isWarning(limit, threshold) {
+    if (!isTable(limit)) return false;
+    return limit.severity !== "normal" || limit.percent >= threshold;
+}
+
+// COMPARADOR de Array.prototype.sort: negativo si `a` va ANTES que `b`, cero
+// si empatan, positivo si va después.
+//
+// El original en Luau devuelve un PREDICADO (`true` = "a va antes que b"),
+// porque eso es lo que espera table.sort. Traducir el cuerpo literalmente
+// —devolviendo booleanos— daría un orden mal: `true` se coerce a 1, o sea "a
+// va DESPUÉS", justo lo contrario. Lo que se traduce es la intención.
+//
+// El tercer criterio (key) no está en el original de Caelestia y se conserva
+// aquí aunque Array.prototype.sort sea estable desde ES2019. La razón no es de
+// Luau: un comparador sin desempate devuelve el mismo sentido para (a,b) y
+// (b,a), que es exactamente lo que table.sort rechaza con "invalid order
+// function for sorting". Un orden total, determinista e irreflexivo es
+// correcto por sí mismo, y además hace que el panel no dependa de la
+// estabilidad del motor que le toque.
+function byCriticality(a, b) {
+    var ra = severityRank(a.severity);
+    var rb = severityRank(b.severity);
+    if (ra !== rb) return rb - ra;                       // más grave primero
+    if (a.percent !== b.percent) return b.percent - a.percent; // más alto primero
+    if (a.key < b.key) return -1;
+    if (a.key > b.key) return 1;
+    return 0;                                            // irreflexivo
+}
+
+// El widget solo puede codificar dos glifos, así que solo compite entre los
+// límites primarios. Los sublímites por modelo se señalan con el glifo
+// indicador (ver hasHiddenWarning).
+// La ventana de 5 h manda SIEMPRE, aunque la semanal vaya más alta y más grave.
+// Antes ganaba la de mayor porcentaje, y en la práctica eso era casi siempre la
+// semanal: la de sesión —la única que se recupera esperando un rato— solo
+// asomaba por la barra cuando ya iba por delante, que es justo cuando ya no
+// hacía falta mirarla.
+//
+// Esto carga de trabajo al punto de aviso: con la sesión fija en la barra, una
+// semanal al 95 % ya no puede ser la píldora, y hasHiddenWarning es la ÚNICA
+// señal que queda de ella sin abrir el panel. No quitarlo.
+//
+// Si la API no manda ventana de sesión, se cae al primario más grave, que es lo
+// que hacía antes para todos.
+function pickPrimary(limits) {
+    if (!isTable(limits)) return null;
+    var primaries = [];
+    var i;
+    for (i = 0; i < limits.length; i++) {
+        if (isTable(limits[i]) && limits[i].primary) primaries.push(limits[i]);
+    }
+    if (primaries.length === 0) return null;
+
+    for (i = 0; i < primaries.length; i++) {
+        if (primaries[i].key === "session") return primaries[i];
+    }
+
+    primaries.sort(byCriticality); // copia local: no muta la entrada
+    return primaries[0];
+}
+
+function sortForPanel(limits, primaryKey) {
+    if (!isTable(limits)) return [];
+    var rest = [];
+    for (var i = 0; i < limits.length; i++) {
+        if (isTable(limits[i]) && limits[i].key !== primaryKey) rest.push(limits[i]);
+    }
+    rest.sort(byCriticality);
+    return rest;
+}
+
+function hasHiddenWarning(limits, primaryKey, threshold) {
+    if (!isTable(limits)) return false;
+    for (var i = 0; i < limits.length; i++) {
+        if (isTable(limits[i]) && limits[i].key !== primaryKey
+            && isWarning(limits[i], threshold)) {
+            return true;
+        }
+    }
+    return false;
+}
+
 var publicApi = {
     num: num,
     validMs: validMs,
@@ -265,7 +541,29 @@ var publicApi = {
     describeRelative: describeRelative,
     describeAbsolute: describeAbsolute,
     describeMoney: describeMoney,
-    CURRENCY_SYMBOLS: CURRENCY_SYMBOLS
+    CURRENCY_SYMBOLS: CURRENCY_SYMBOLS,
+
+    // Varias de estas son `local` en logic.luau (scopeNameOf, limitKey,
+    // normalizeExtraUsage, isPrimaryKind). Se exportan igualmente porque un
+    // `import "logic.js" as Logic` en QML expone TODAS las declaraciones de
+    // nivel superior del script: dejarlas fuera de publicApi solo haría que
+    // node viese menos superficie que QML, y la suite dejaría de cubrir lo que
+    // el host puede llamar. Mismo criterio que ya se aplicó en la tarea 3 con
+    // durationText y startOfDaySec.
+    SEVERITY_RANK: SEVERITY_RANK,
+    severityRank: severityRank,
+    labelDescriptor: labelDescriptor,
+    PRIMARY_KINDS: PRIMARY_KINDS,
+    isPrimaryKind: isPrimaryKind,
+    scopeNameOf: scopeNameOf,
+    limitKey: limitKey,
+    normalizeExtraUsage: normalizeExtraUsage,
+    normalizeUsage: normalizeUsage,
+    isWarning: isWarning,
+    byCriticality: byCriticality,
+    pickPrimary: pickPrimary,
+    sortForPanel: sortForPanel,
+    hasHiddenWarning: hasHiddenWarning
 };
 
 if (typeof module !== "undefined")
