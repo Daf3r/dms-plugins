@@ -257,19 +257,73 @@ describe("ajustes / el selector de idioma", function () {
         });
     });
 
-    test("los tres valores que ofrece son los que pickLanguage entiende", function () {
-        // "auto" tiene que seguir la locale, y los otros dos tienen que ganarle.
-        var I18n = require("../i18n.js");
-        assert.equal(I18n.pickLanguage("auto", "fr_FR"), "fr");
-        assert.equal(I18n.pickLanguage("en", "fr_FR"), "en");
-        assert.equal(I18n.pickLanguage("es", "fr_FR"), "es");
-    });
+    // Los valores que el selector ofrece DE VERDAD, leídos del cuerpo del
+    // bloque con la misma regex de `value` que usa el caso de arriba.
+    //
+    // Los dos casos siguientes se apoyan en ESTO y no en una lista escrita a
+    // mano, que es lo que los hacía inertes: con `["en", "es"]` escrito aquí,
+    // añadir un cuarto `{ label: "Français", value: "fr" }` al selector —sin
+    // translations/fr.json— pasaba en verde, que es literalmente el fallo que
+    // dicen cubrir.
+    function offeredLanguages() {
+        var body = setting("language").body;
+        var values = [];
+        var pattern = /value\s*:\s*"([^"]*)"/g;
+        var m;
+        while ((m = pattern.exec(body)) !== null)
+            values.push(m[1]);
+        assert.ok(values.length > 0,
+                  "no se ha podido leer ninguna opción del selector de idioma de Settings.qml");
+        return values;
+    }
 
     test("hay catálogo para cada idioma que el selector ofrece", function () {
-        ["en", "es"].forEach(function (lang) {
+        offeredLanguages().forEach(function (lang) {
+            // "auto" no es una lengua, es "sigue la locale": no tiene catálogo
+            // propio ni debe tenerlo.
+            if (lang === "auto")
+                return;
             var file = path.join(PLUGIN_DIR, "translations", lang + ".json");
-            assert.ok(fs.existsSync(file), "el selector ofrece " + lang + " y no hay translations/" + lang + ".json");
+            assert.ok(fs.existsSync(file),
+                      "el selector ofrece " + lang + " y no hay translations/" + lang + ".json");
         });
+    });
+
+    test("cada valor que ofrece es uno que pickLanguage entiende", function () {
+        var I18n = require("../i18n.js");
+        // La locale de prueba es de una TERCERA lengua a propósito: así "el
+        // ajuste gana" no se confunde con "coincide con la locale por
+        // casualidad".
+        offeredLanguages().forEach(function (value) {
+            if (value === "auto") {
+                assert.equal(I18n.pickLanguage(value, "fr_FR"), "fr",
+                             '"auto" tiene que seguir la locale de la sesión');
+                return;
+            }
+            assert.equal(I18n.pickLanguage(value, "fr_FR"), value,
+                         'el selector ofrece "' + value + '" y pickLanguage no lo impone sobre la locale');
+        });
+    });
+});
+
+// ── La regla de idioma es UNA ───────────────────────────────────────────────
+//
+// `pickLanguage` (i18n.js) existe exactamente para que Daemon.qml y
+// Settings.qml no diverjan: si divergen, el panel de ajustes se ve en un idioma
+// y la píldora en otro, y nada lo delata. La atadura es textual, con el mismo
+// criterio que la de `configOr("warn_threshold", Logic.X)` de más arriba: lo
+// que se protege es que ninguna de las dos superficies se monte su propia
+// regla. Se mira el código sin comentarios, así que las menciones en prosa —que
+// las hay en los dos ficheros— no cuentan.
+describe("ajustes / las dos superficies deciden el idioma con la misma función", function () {
+    test("Daemon.qml resuelve el idioma con I18n.pickLanguage", function () {
+        assert.ok(/I18n\.pickLanguage\(/.test(DAEMON_SRC),
+                  "Daemon.qml ya no llama a I18n.pickLanguage: la regla de idioma se ha duplicado");
+    });
+
+    test("Settings.qml resuelve el idioma con I18n.pickLanguage", function () {
+        assert.ok(/I18n\.pickLanguage\(/.test(SETTINGS_SRC),
+                  "Settings.qml ya no llama a I18n.pickLanguage: la regla de idioma se ha duplicado");
     });
 });
 
