@@ -27,12 +27,19 @@
 // una clave añadida a un catálogo y olvidada en el otro, o ante un tercer
 // idioma incompleto en el futuro.
 //
-// Fuera de alcance a propósito: el passthrough de un `desc.text` literal y
-// la composición de `desc.weekday` (nombrar el día antes de encajarlo en
-// reset.weekday) que hacía el `render()` local de service.luau (líneas
-// 35-47 de la versión Luau). Eso es pegamento de host — cada entrada
-// (Daemon.qml, Widget.qml) lo resuelve envolviendo a I18n.render, igual que
-// service.luau envolvía a noctalia.tr en vez de llamarlo directo.
+// `desc.text` y `desc.weekday` SÍ son parte del contrato de esta función, no
+// pegamento de host: logic.luau los produce directamente (labelDescriptor
+// línea 51 devuelve `{ text = kind }` para un `kind` que no reconoce;
+// describeAbsolute línea 360 devuelve `{ key = "reset.weekday",
+// params = { clock = ... }, weekday = t.wday }`). render.luau los resuelve
+// en el mismo sitio donde resuelve la clave, con esta precedencia:
+//   1. `desc.text` corta el paso y se devuelve tal cual, ANTES de mirar el
+//      catálogo — es intraducible por naturaleza (el nombre de un `kind`
+//      desconocido).
+//   2. `desc.weekday` (un número 1-7) se traduce con la clave
+//      `weekday.<N>` — con el mismo respaldo entre catálogos que cualquier
+//      otra clave — y se inyecta como el parámetro `weekday`, en una COPIA
+//      de `params` para no mutar el objeto que pasó quien llama.
 
 var PLACEHOLDER_PATTERN = /\{(\w+)\}/g;
 
@@ -48,20 +55,59 @@ function substitute(pattern, params) {
     });
 }
 
+// Copia superficial de `params`, para poder añadir `weekday` sin tocar el
+// objeto original.
+function copyParams(params) {
+    var copy = {};
+    var name;
+    for (name in params) {
+        if (Object.prototype.hasOwnProperty.call(params, name)) {
+            copy[name] = params[name];
+        }
+    }
+    return copy;
+}
+
+// Resuelve `key` contra `catalog`, y si falta, contra `fallbackCatalog`.
+// Devuelve undefined si no está en ninguno de los dos.
+function resolve(key, catalog, fallbackCatalog) {
+    return (catalog && catalog[key]) || (fallbackCatalog && fallbackCatalog[key]);
+}
+
 // render(descriptor, catalog, fallbackCatalog) -> string
 //
-//   - descriptor null/undefined, o sin `key`         -> ""
-//   - `key` presente en `catalog`                     -> plantilla interpolada
-//   - `key` ausente en `catalog` pero en `fallbackCatalog` -> la de éste
-//   - `key` ausente en ambos                           -> la propia `key`
+//   - descriptor null/undefined, o sin `text` ni `key` -> ""
+//   - `desc.text` presente                              -> se devuelve tal
+//                                                          cual, sin tocar
+//                                                          el catálogo
+//   - `desc.weekday` presente                           -> se traduce con
+//                                                          `weekday.<N>` y se
+//                                                          inyecta como
+//                                                          params.weekday
+//                                                          antes de resolver
+//                                                          `desc.key`
+//   - `key` presente en `catalog`                       -> plantilla
+//                                                          interpolada
+//   - `key` ausente en `catalog` pero en
+//     `fallbackCatalog`                                 -> la de éste
+//   - `key` ausente en ambos                            -> la propia `key`
 function render(descriptor, catalog, fallbackCatalog) {
-    if (!descriptor || !descriptor.key) return "";
+    if (!descriptor) return "";
+    if (typeof descriptor.text === "string") return descriptor.text;
+    if (!descriptor.key) return "";
 
-    var key = descriptor.key;
-    var pattern = (catalog && catalog[key]) || (fallbackCatalog && fallbackCatalog[key]);
-    if (!pattern) return key;
+    var params = descriptor.params;
+    if (typeof descriptor.weekday === "number") {
+        var weekdayKey = "weekday." + descriptor.weekday;
+        var weekdayLabel = resolve(weekdayKey, catalog, fallbackCatalog) || weekdayKey;
+        params = copyParams(params);
+        params.weekday = weekdayLabel;
+    }
 
-    return substitute(pattern, descriptor.params);
+    var pattern = resolve(descriptor.key, catalog, fallbackCatalog);
+    if (!pattern) return descriptor.key;
+
+    return substitute(pattern, params);
 }
 
 var publicApi = {
