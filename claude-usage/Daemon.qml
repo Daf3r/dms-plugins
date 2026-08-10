@@ -17,7 +17,7 @@
 //                               Quickshell.Networking: en Quickshell 0.3.0 ese
 //                               módulo es NetworkManager y el `NetworkRequest`
 //                               que documenta DMS no existe.
-//   noctalia.readFile        -> XMLHttpRequest con URL file://
+//   noctalia.readFile        -> FileView de Quickshell.Io
 //   noctalia.state.set       -> usageState.set(...) (PluginGlobalVar)
 //   noctalia.notify          -> Quickshell.execDetached(["dms","ipc","toast",…])
 //   noctalia.setUpdateInterval -> Timer de QtQuick
@@ -30,12 +30,34 @@
 //   noctalia.nowMs           -> Date.now()
 //   onIpc("refresh")         -> la variable global `refreshRequest` + toggle()
 //
+// ── Dos mecanismos distintos, y no es un descuido ────────────────────────────
+//
+// HTTPS va por XMLHttpRequest y los ficheros locales por FileView. La razón es
+// que **Qt veta la lectura de ficheros locales por XHR**: `GET` sobre una URL
+// `file://` responde «Using GET on a local file is disabled by default. Set
+// QML_XHR_ALLOW_FILE_READ to 1» y —lo peor— falla EN SILENCIO: `open()` no
+// lanza y el callback no llega nunca a DONE. La ronda de arreglo 1 lo midió:
+// el daemon se quedaba con la carga de catálogos a medias, sin publicar nada y
+// sin un solo error visible.
+//
+// La variable de entorno se descartó: levantaría el veto para el shell entero
+// del usuario, no solo para este plugin, y eso lo haría no distribuible.
+//
+// XMLHttpRequest se conserva para HTTPS y no se toca: el veto es solo para
+// `file://`, y `getResponseHeader()` es lo que hace posible parseRetryAfter.
+//
 // ── Lo que la traducción cambia de forma, y por qué ──────────────────────────
 //
-// `noctalia.readFile` era SÍNCRONO. XMLHttpRequest no lo es, así que poll()
-// pasa de ser una función lineal a una cadena de continuaciones. Eso mueve la
-// guarda `inFlight`: en el original solo protegía el GET, y aquí tiene que
-// cubrir la cadena entera desde la lectura de credenciales, que ya es E/S.
+// `noctalia.readFile` era SÍNCRONO. FileView (en su forma no bloqueante) no lo
+// es, así que poll() pasa de ser una función lineal a una cadena de
+// continuaciones. Eso mueve la guarda `inFlight`: en el original solo protegía
+// el GET, y aquí tiene que cubrir la cadena entera desde la lectura de
+// credenciales, que ya es E/S.
+//
+// Y de ahí sale la otra lección de la ronda 1, que es la que de verdad
+// importa: **una continuación que no llega deja el daemon mudo y sin error**.
+// Por eso hay dos vigilantes de atasco (catalogGuard y stallGuard) más abajo:
+// ningún camino puede dejar el plugin callado para siempre.
 //
 // SEGURIDAD (spec heredada §12): el token OAuth viaja SOLO en la cabecera
 // Authorization de requestUsage(). Nunca a un log, ni a la UI, ni a un mensaje
@@ -43,6 +65,7 @@
 
 import QtQuick
 import Quickshell
+import Quickshell.Io
 import qs.Common
 import qs.Modules.Plugins
 import qs.Widgets
@@ -126,6 +149,40 @@ PluginComponent {
         onTriggered: root.poll()
     }
 
+    // ── Vigilantes de atasco ─────────────────────────────────────────────────
+    // La lección de la ronda de arreglo 1 no es "file:// está vetado": es que
+    // una continuación que NO LLEGA deja el daemon mudo y sin un solo error.
+    // Pasó con XMLHttpRequest sobre file://, cuyo callback no alcanzaba nunca
+    // DONE, y puede volver a pasar por otras vías — una petición HTTPS colgada,
+    // por ejemplo: XMLHttpRequest no trae tiempo de espera por defecto. Estos
+    // dos temporizadores son independientes del mecanismo de E/S, y por eso
+    // cubren también los fallos que todavía no conocemos.
+
+    // Arranque: si los catálogos no responden, se arranca igual. Mejor el texto
+    // en crudo que un plugin que no publica nada.
+    Timer {
+        id: catalogGuard
+        interval: 10000
+        repeat: false
+        onTriggered: {
+            if (root.catalogsReady)
+                return;
+            console.warn("claudeUsage: los catálogos no respondieron a tiempo; se arranca sin ellos");
+            root.catalogsPending = 0;
+            root.finishCatalogs();
+        }
+    }
+
+    // Sondeo: si `inFlight` se quedase en true, poll() sería un no-op para
+    // siempre y el plugin no volvería a actualizarse nunca. Generoso a
+    // propósito — no es un tiempo de espera de red, es el último recurso.
+    Timer {
+        id: stallGuard
+        interval: 120000
+        repeat: false
+        onTriggered: root.pollStalled()
+    }
+
     // ── i18n ─────────────────────────────────────────────────────────────────
 
     // Resuelve un descriptor de logic.js contra el catálogo. Es la única
@@ -159,16 +216,17 @@ PluginComponent {
         const lang = localeLanguage();
         const wantsOther = lang !== "en";
         root.catalogsPending = wantsOther ? 2 : 1;
+        catalogGuard.restart();
 
         // en.json se carga SIEMPRE: es el respaldo que i18n.js consulta cuando
         // una clave falta en el catálogo activo.
-        readJsonFile(Qt.resolvedUrl("translations/en.json"), function (doc) {
+        readJsonFile(pluginPath("translations/en.json"), function (doc) {
             root.fallbackCatalog = doc;
             root.catalogLoaded();
         });
 
         if (wantsOther) {
-            readJsonFile(Qt.resolvedUrl("translations/" + lang + ".json"), function (doc) {
+            readJsonFile(pluginPath("translations/" + lang + ".json"), function (doc) {
                 // Un idioma sin catálogo deja `catalog` en null y render() cae
                 // al respaldo inglés. Es el modo degradado que i18n.js
                 // documenta, no un error.
@@ -182,6 +240,15 @@ PluginComponent {
         root.catalogsPending -= 1;
         if (root.catalogsPending > 0)
             return;
+        finishCatalogs();
+    }
+
+    // Idempotente a propósito: la llaman tanto la última lectura que termina
+    // como el vigilante de arranque, y solo una de las dos puede ganar.
+    function finishCatalogs() {
+        if (root.catalogsReady)
+            return;
+        catalogGuard.stop();
         if (!root.catalog)
             root.catalog = root.fallbackCatalog;
         if (!root.fallbackCatalog)
@@ -239,51 +306,82 @@ PluginComponent {
 
     // ── Lectura de ficheros ──────────────────────────────────────────────────
 
-    // `~` lo expande Paths (qs.Common), y XMLHttpRequest necesita una URL
-    // file://, no una ruta.
-    function fileUrl(path) {
-        return Paths.toFileUrl(Paths.expandTilde(path));
+    // FileView quiere una RUTA, no una URL: el `file://` sobra. Es como lo usa
+    // PluginService de DMS, que llama a su parámetro `manifestPathNoScheme`.
+    // El `~` lo expande Paths (qs.Common).
+    function localPath(path) {
+        return Paths.expandTilde(path);
     }
 
-    function readTextFile(url, callback) {
-        let delivered = false;
-        function deliver(text) {
-            if (delivered)
-                return;
-            delivered = true;
-            callback(text);
-        }
+    // Ruta de un fichero del propio plugin. Se resuelve desde la ubicación de
+    // este .qml y no con pluginService.getPluginPath(), para que la lectura de
+    // los catálogos no dependa de que el registro del plugin ya esté montado.
+    function pluginPath(relative) {
+        return Paths.strip(Qt.resolvedUrl(relative));
+    }
 
-        let xhr;
-        try {
-            xhr = new XMLHttpRequest();
-        } catch (e) {
-            deliver(null);
-            return;
-        }
+    // Una instancia de FileView POR LECTURA, creada al vuelo y destruida en la
+    // continuación. Es el mismo patrón con el que PluginService de DMS lee los
+    // manifiestos (`manifestFvComp`), y evita el problema de un FileView fijo:
+    // reasignar el MISMO `path` no vuelve a emitir `loaded`, así que un sondeo
+    // tras otro leería la copia cacheada del primero y no vería nunca un token
+    // renovado.
+    Component {
+        id: fileReader
 
-        xhr.onreadystatechange = function () {
-            if (xhr.readyState !== XMLHttpRequest.DONE)
-                return;
-            // Con file:// no hay código de estado HTTP: Qt deja `status` en 0 y
-            // el contenido en `responseText`. Un fichero ausente o ilegible
-            // llega igual —DONE, con `responseText` vacío—, así que la ausencia
-            // se detecta por el texto y no por el código. Es exactamente el
-            // contrato de noctalia.readFile, que devolvía nil en ambos casos.
-            const text = xhr.responseText;
-            deliver(typeof text === "string" && text !== "" ? text : null);
-        };
+        FileView {
+            id: view
 
-        try {
-            xhr.open("GET", url);
-            xhr.send();
-        } catch (e) {
-            deliver(null);
+            // La continuación se pasa como propiedad inicial de createObject y
+            // no con un .connect() posterior: si la carga terminase durante la
+            // propia creación, el connect llegaría tarde y el callback se
+            // perdería.
+            property var deliver: null
+
+            // Un fichero que no está es un caso NORMAL aquí —no hay
+            // credenciales, no hay caché, no hay catálogo para ese idioma— y no
+            // debe ensuciar el log del shell.
+            printErrors: false
+            watchChanges: false
+
+            onLoaded: {
+                const callback = view.deliver;
+                const text = view.text();
+                view.destroy();
+                if (callback)
+                    callback(typeof text === "string" && text !== "" ? text : null);
+            }
+
+            // FileViewError: 1 Unknown, 2 FileNotFound, 3 PermissionDenied,
+            // 4 NotAFile. Los cuatro se traducen a lo mismo que devolvía
+            // noctalia.readFile ante un fichero ilegible: nada. Quien llama ya
+            // distingue "no hay dato" y no necesita el motivo, así que los
+            // estados que se publican son los de siempre y no hay ninguno
+            // nuevo: sin credenciales -> "missing", sin caché -> "stale".
+            onLoadFailed: err => {
+                const callback = view.deliver;
+                view.destroy();
+                if (callback)
+                    callback(null);
+            }
         }
     }
 
-    function readJsonFile(url, callback) {
-        readTextFile(url, function (text) {
+    function readTextFile(path, callback) {
+        const view = fileReader.createObject(root, {
+            path: path,
+            deliver: callback
+        });
+        // createObject devuelve null si el componente no se puede instanciar.
+        // Sin esta rama la continuación no llegaría NUNCA y el daemon se
+        // quedaría mudo sin un solo error — que es exactamente el fallo que
+        // costó la ronda de arreglo 1.
+        if (!view)
+            callback(null);
+    }
+
+    function readJsonFile(path, callback) {
+        readTextFile(path, function (text) {
             callback(Logic.safeParse(text));
         });
     }
@@ -440,7 +538,13 @@ PluginComponent {
     // si hay una petición en vuelo, el botón del panel tiene que reflejarlo.
     // El estado es UNA sola clave, así que la bandera viaja dentro y cambiar de
     // bandera republica el mismo objeto con el valor nuevo.
-    onInFlightChanged: republishInFlight()
+    onInFlightChanged: {
+        republishInFlight();
+        if (root.inFlight)
+            stallGuard.restart();
+        else
+            stallGuard.stop();
+    }
 
     function republishInFlight() {
         const current = root.published;
@@ -497,7 +601,7 @@ PluginComponent {
             return;
         }
 
-        readTextFile(fileUrl(root.cachePath), function (text) {
+        readTextFile(localPath(root.cachePath), function (text) {
             if (!text) {
                 // Ni memoria ni caché: publish() sin modelo hace que la UI diga
                 // "Sin conexión" en vez de pintar una píldora al 0 %.
@@ -550,6 +654,21 @@ PluginComponent {
         root.inFlight = false;
     }
 
+    // Ninguna continuación de la cadena llegó. Se cuenta como fallo y se libera
+    // la guarda, que es lo único imprescindible: sin eso el sondeo queda muerto
+    // para siempre. NO se cae a la caché — eso sería volver a leer un fichero,
+    // que es justo lo que puede estar atascado —, así que con dato en memoria
+    // se republica como viejo y sin él se deja el estado como esté. Ningún
+    // estado nuevo.
+    function pollStalled() {
+        console.warn("claudeUsage: el sondeo se quedó sin respuesta; se aborta y se cuenta como fallo");
+        root.failures += 1;
+        root.endPoll();
+        if (root.lastModel)
+            root.publish("stale", root.lastModel, root.lastModel.source, root.lastModel.fetchedAt);
+        root.applyCadence(false);
+    }
+
     // Noctalia exponía `HttpResponse = { ok, status, body }` y su `ok` NO
     // significaba 2xx: significaba que la transacción llegó a completarse. Se
     // ve en el orden de las ramas del original —el 401/403 se comprueba
@@ -594,7 +713,7 @@ PluginComponent {
 
         root.inFlight = true;
 
-        readTextFile(fileUrl(root.credentialsPath), function (credText) {
+        readTextFile(localPath(root.credentialsPath), function (credText) {
             if (!credText) {
                 root.publish("missing", null);
                 root.endPoll();
@@ -732,6 +851,12 @@ PluginComponent {
     }
 
     Component.onCompleted: {
+        // Tercer miembro de la familia "mudo sin error": PluginGlobalVar.set()
+        // saca el pluginId de su `parent` y, si no lo encuentra, no publica y
+        // solo deja un aviso en el log del host. El widget se quedaría con su
+        // valor por defecto para siempre. Se comprueba una vez, aquí.
+        if (!root.pluginId)
+            console.warn("claudeUsage: sin pluginId; el estado no se publicará");
         loadNotifyState();
         // Encadena: cuando los catálogos están, catalogLoaded() llama a
         // start(). Publicar antes enseñaría las claves sin traducir.
