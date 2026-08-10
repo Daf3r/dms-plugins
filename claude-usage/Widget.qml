@@ -90,6 +90,7 @@ import QtQuick
 import qs.Common
 import qs.Modules.Plugins
 import qs.Widgets
+import "components"
 
 PluginComponent {
     id: root
@@ -823,43 +824,49 @@ PluginComponent {
                         visible: root.hasNumber
                         opacity: root.dimmed ? root.attenuatedAlpha : 1.0
 
-                        // Tarjeta destacada: la ventana crítica.
+                        // Tarjeta destacada: la ventana crítica. El anillo
+                        // sustituye al par glifo+porcentaje de esta fila, no a
+                        // la barra: la barra la conservan las demás filas
+                        // (`UsageBar`, más abajo).
                         //
-                        // AQUÍ VA `UsageRing` (tarea 11). El anillo sustituye al
-                        // par glifo+porcentaje de esta fila, no a la barra: la
-                        // barra la conservan las demás filas.
+                        // `dimmed` se deja SIN atar a `root.dimmed` a
+                        // propósito: la Column que envuelve todo este bloque
+                        // (línea ~824) ya aplica `opacity: attenuatedAlpha`
+                        // cuando el dato es viejo. Si el anillo atenuase
+                        // TAMBIÉN por su cuenta, los dos 0.7 se multiplicarían
+                        // (0.49) y se caería por debajo del umbral legible que
+                        // el propio comentario de más arriba fija para este
+                        // plugin — la misma regla de «no acumular» que ya vale
+                        // para la píldora.
+                        //
+                        // `openArc` es la codificación por forma del diseño
+                        // original: la sesión (ventana que se vacía y
+                        // reinicia) es un arco de 270° con hueco abajo; la
+                        // semanal (cupo cerrado) es un anillo completo. Se lee
+                        // directamente de `primary.key`, el mismo predicado
+                        // que usa Daemon.qml para elegir el glifo de la
+                        // píldora.
                         Item {
                             width: parent.width
-                            height: Math.max(primaryIcon.implicitHeight, primaryLabel.implicitHeight, primaryPercent.implicitHeight)
+                            height: Math.max(primaryRing.implicitHeight, primaryLabel.implicitHeight)
 
-                            DankIcon {
-                                id: primaryIcon
+                            UsageRing {
+                                id: primaryRing
 
                                 anchors.left: parent.left
                                 anchors.verticalCenter: parent.verticalCenter
-                                name: root.primary ? root.primary.glyph : ""
-                                size: Theme.iconSize - 4
-                                color: (root.primary && root.primary.warning) ? Theme.error : Theme.primary
-                            }
-
-                            StyledText {
-                                id: primaryPercent
-
-                                anchors.right: parent.right
-                                anchors.verticalCenter: parent.verticalCenter
-                                text: root.primary ? root.primary.percent + " %" : ""
-                                color: (root.primary && root.primary.warning) ? Theme.error : Theme.surfaceText
-                                font.pixelSize: Theme.fontSizeMedium
-                                font.weight: Font.Bold
+                                percent: root.primary ? root.primary.percent : 0
+                                openArc: !!(root.primary && root.primary.key === "session")
+                                warning: !!(root.primary && root.primary.warning)
+                                ringSize: 36
                             }
 
                             StyledText {
                                 id: primaryLabel
 
-                                anchors.left: primaryIcon.right
+                                anchors.left: primaryRing.right
                                 anchors.leftMargin: Theme.spacingS
-                                anchors.right: primaryPercent.left
-                                anchors.rightMargin: Theme.spacingS
+                                anchors.right: parent.right
                                 anchors.verticalCenter: parent.verticalCenter
                                 text: root.primary ? root.primary.label : ""
                                 color: Theme.surfaceText
