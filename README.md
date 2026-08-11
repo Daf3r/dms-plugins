@@ -19,13 +19,22 @@ ln -s /home/daf3r/Projects/dms-plugins/claude-usage \
       ~/.config/DankMaterialShell/plugins/claude-usage
 ```
 
-On NixOS, DMS exposes plugins as a first-class home-manager option whose `src`
-takes a local path:
+On NixOS, DMS exposes plugins as a first-class home-manager option. An absolute
+path in `src` will not evaluate — flakes evaluate in pure mode — so bring this
+repo in as an input (`flake = false`, it ships no `flake.nix`) and point at the
+subdirectory:
 
 ```nix
+# flake.nix
+dms-plugins = {
+  url = "github:Daf3r/dms-plugins";
+  flake = false;
+};
+
+# wherever your DMS config lives
 programs.dank-material-shell.plugins.claude-usage = {
   enable = true;
-  src = /home/daf3r/Projects/dms-plugins/claude-usage;
+  src = "${inputs.dms-plugins}/claude-usage";
 };
 ```
 

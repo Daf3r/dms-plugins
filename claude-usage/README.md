@@ -142,15 +142,32 @@ Edit a file in the repo and reload DMS; no rebuild in the loop.
 
 ### NixOS
 
-DMS exposes plugins as a first-class home-manager option, and `src` takes a local
-path:
+DMS exposes plugins as a first-class home-manager option. `src` accepts a path,
+but **an absolute path pointing outside your flake will not evaluate**: flakes
+evaluate in pure mode, and `access to absolute path '…' is forbidden in pure
+evaluation mode` is what you get. Bring the repo in as an input instead.
+
+In `flake.nix`:
+
+```nix
+dms-plugins = {
+  url = "github:Daf3r/dms-plugins";
+  flake = false;
+};
+```
+
+Then, wherever your DMS config lives:
 
 ```nix
 programs.dank-material-shell.plugins.claude-usage = {
   enable = true;
-  src = /home/daf3r/Projects/dms-plugins/claude-usage;
+  src = "${inputs.dms-plugins}/claude-usage";
 };
 ```
+
+`flake = false` because this repo ships no `flake.nix` — it is a source tree,
+not a flake. Picking up a change means pushing it and running
+`nix flake update dms-plugins`.
 
 The attribute name is the **directory** name that gets created under
 `~/.config/DankMaterialShell/plugins/`, so it is `claude-usage` with a hyphen.
