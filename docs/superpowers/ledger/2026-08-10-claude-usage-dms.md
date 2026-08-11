@@ -529,3 +529,36 @@ Rama fusionada a main en avance rapido y empujada (6eca0d0..3fd14fd), feat/claud
 dms.nix: el bloque plugins.claude-usage lo escribi yo al cierre — los dos `nh os switch`
         anteriores no lo llevaban porque solo estaba documentado en el README, nunca pegado.
         Queda pendiente UN switch mas para que surta efecto.
+
+=== ESTADO FINAL 2026-08-10 18:44 — VERIFICADO, NADA A MEDIO ANDAR ===
+La linea de arriba («queda pendiente UN switch mas») se quedo corta: aquel switch FALLO
+dos veces mas. Lo que pasó de verdad, por si hace falta rehacerlo en otra maquina:
+
+1. `src = /home/daf3r/Projects/dms-plugins/claude-usage` NO EVALUA. Los flakes evaluan en
+   modo puro: «access to absolute path is forbidden in pure evaluation mode». Ese bloque
+   venia del plan y de los dos README, y NUNCA se habia evaluado — estaba mal desde el
+   primer dia y no se supo hasta intentarlo.
+   ARREGLO (decision de daf3r entre tres opciones): input de flake `dms-plugins` con
+   `flake = false` -> `github:Daf3r/dms-plugins`, y `src = "${inputs.dms-plugins}/claude-usage"`.
+   Descartado el input `path:` local: ataria el flake a un directorio de esta maquina.
+   Los dos README corregidos y empujados (commit e5aecdc) ANTES de clavar el lock, para que
+   el rev clavado ya llevara la documentacion buena.
+2. Segundo switch: build OK, ACTIVACION fallida. home-manager se niega a pisar el symlink
+   de desarrollo — «Existing file '...' would be clobbered». backupFileExtension no ayuda
+   porque lo que hay es un enlace a un DIRECTORIO, no un fichero («cmp: ... Is a directory»).
+   ARREGLO: quitar el symlink, que era el paso 2 de la tarea 13 que habiamos aparcado.
+3. Tercer switch: entra.
+
+VERIFICADO A MANO, no por suposicion:
+  ~/.config/DankMaterialShell/plugins/claude-usage -> /nix/store/vipvzgb32b126m3k4ms2km4dwrz5c3wj
+      -home-manager-files/.config/DankMaterialShell/plugins/claude-usage
+  dms ipc plugins list -> claudeUsage [loaded]
+  dms-plugins limpio en e5aecdc, empujado.
+
+EL BUCLE DE TRABAJO HA CAMBIADO: el rev esta clavado en flake.lock, asi que editar
+~/Projects/dms-plugins YA NO HACE NADA sobre lo que corre. Un cambio son tres pasos:
+commit y push -> `nix flake update dms-plugins` (DENTRO de ~/nixos-config) -> `nh os switch`.
+Para recuperar el bucle rapido: borrar el bloque de dms.nix y rehacer el symlink.
+
+UNICO CABO SUELTO: ~/nixos-config queda SUCIO con dms.nix, flake.nix y flake.lock (58
+lineas). No los commitee — ese repo es de daf3r y tiene su propio estilo de mensajes.
