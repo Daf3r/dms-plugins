@@ -24,19 +24,31 @@ y hueco para anotar lo observado.
 
 ## Antes de empezar
 
-Hoy el plugin vive en un **symlink de desarrollo**:
+**El plugin ya no vive en un symlink de desarrollo.** Desde el 2026-08-10 está
+declarado en `~/nixos-config/dms.nix` y esa ruta es un enlace de **solo lectura
+al store**:
 
 ```bash
 ls -l ~/.config/DankMaterialShell/plugins/claude-usage
-# -> /home/daf3r/Projects/dms-plugins/claude-usage
+# -> /nix/store/…-home-manager-files/.config/DankMaterialShell/plugins/claude-usage
 ```
 
-Editar un fichero del repo cambia el plugin en el acto; hace falta recargar DMS
-para que el cambio entre. En cuanto se declare en Nix
-(`programs.dank-material-shell.plugins.claude-usage`, ver el README del plugin)
-ese camino pasa a ser un enlace de **solo lectura al store** y cada cambio
-exigirá un `nh os switch`. Para una tanda de validación manual conviene el
-symlink.
+Editar el repo ya **no** cambia lo que corre: el `src` sale de un input del flake
+apuntado a `github:Daf3r/dms-plugins`, así que hace falta commit, push,
+`nix flake update dms-plugins` y un `nh os switch`.
+
+Esta pasada fuerza fallos apuntando `Daemon.qml` a un servidor local, lo que
+significa editar el plugin **muchas veces seguidas**. Con el enlace al store eso
+es un ciclo de rebuild por caso. Antes de empezar, volver al symlink de
+desarrollo:
+
+```bash
+rm ~/.config/DankMaterialShell/plugins/claude-usage   # es un symlink, no el store
+ln -s /home/daf3r/Projects/dms-plugins/claude-usage \
+      ~/.config/DankMaterialShell/plugins/claude-usage
+```
+
+Al terminar, un `nh os switch` restituye el enlace declarado.
 
 Recarga y log:
 

@@ -131,14 +131,15 @@ hand-edited setting outside the slider range does not break anything.
 
 ## Installing
 
-### Development (mutable, what this repo is set up for)
+### Development (mutable)
 
 ```bash
-ln -s /home/daf3r/Projects/dms-plugins/claude-usage \
+ln -s /path/to/dms-plugins/claude-usage \
       ~/.config/DankMaterialShell/plugins/claude-usage
 ```
 
-Edit a file in the repo and reload DMS; no rebuild in the loop.
+Edit a file in the repo and reload DMS; no rebuild in the loop. Worth switching back
+to this while iterating on the QML, even on NixOS — see below.
 
 ### NixOS
 
