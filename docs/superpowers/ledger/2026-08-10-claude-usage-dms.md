@@ -517,3 +517,15 @@ VEREDICTO FINAL: LA RAMA ENTRA.
 >>>    build de DMS, que su columna «Observado» sigue siendo del build de Luau.
 >>> 3. Los pasos 2 y 3 de la tarea 13: pegar el bloque de claude-usage/README.md:143-163 en
 >>>    ~/nixos-config/dms.nix (SIN el campo `settings`) y `nh os switch`.
+
+=== CIERRE 2026-08-10 ===
+Tarea 11, paso 3 🖐️: FIRMADO por daf3r — «el anillo se ve todo bien».
+tests/MANUAL.md: pasada de los siete estados sobre el build de DMS DESCARTADA por daf3r,
+        que la dio por innecesaria viendo el plugin funcionar en vivo. Anotada como tal en
+        la cabecera del propio MANUAL.md para que su columna «Observado», que es del build
+        de LUAU del 2026-08-08, no se lea nunca como evidencia de DMS.
+Rama fusionada a main en avance rapido y empujada (6eca0d0..3fd14fd), feat/claude-usage
+        borrada, suite 189/189 verde sobre el resultado fusionado.
+dms.nix: el bloque plugins.claude-usage lo escribi yo al cierre — los dos `nh os switch`
+        anteriores no lo llevaban porque solo estaba documentado en el README, nunca pegado.
+        Queda pendiente UN switch mas para que surta efecto.

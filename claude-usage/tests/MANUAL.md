@@ -5,6 +5,13 @@ estados de error, no: solo existen cuando algo del entorno falla, y forzarlos
 requiere el shell real (spec §9). Esta es la lista, con el procedimiento exacto
 y hueco para anotar lo observado.
 
+> **Estado: pasada NO ejecutada sobre el build de DMS.** daf3r la dio por
+> innecesaria el 2026-08-10, tras verificar el plugin en vivo (píldora de dos
+> ranuras, popout completo, anillo, panel de ajustes, respaldo por caché) y con
+> la suite en 189/189. La columna «Observado» de la tabla es de la pasada del
+> 2026-08-08 **sobre el build de Luau**, no sobre este: no la leas como
+> evidencia de DMS. El procedimiento queda aquí para cuando haga falta.
+
 > **Mientras corre esto, el widget enseña números inventados.** Los casos se
 > fuerzan apuntando `Daemon.qml` a un servidor local, así que durante la
 > validación la barra NO muestra el uso real. Avisar antes de empezar y
