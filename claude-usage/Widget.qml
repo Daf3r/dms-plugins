@@ -116,6 +116,14 @@ PluginComponent {
 
     readonly property var usage: usageState.value
     readonly property string usageStatus: (usage && usage.status) ? usage.status : ""
+    readonly property var codex: usage ? usage.codex : null
+    readonly property string codexStatus: (codex && codex.status) ? codex.status : "missing"
+
+    // El bloque Codex es independiente del de Claude: la ausencia normal de
+    // ~/.codex no debe alterar el estado ni la visibilidad del uso de Claude.
+    readonly property var codexPrimary: codex ? codex.primary : null
+    readonly property var codexSecondary: codex ? codex.secondary : null
+    readonly property var codexOthers: (codex && codex.others) ? codex.others : []
 
     // `primary` nulo con status "stale" significa sin conexión y sin dato: se
     // dice con un glifo, no se pinta un cero (spec §9, carry-forward de las
@@ -164,24 +172,37 @@ PluginComponent {
     // tests/MANUAL.md.
     readonly property bool hasNumber: !!primary && usageStatus !== "expired"
     readonly property bool hasSecondary: hasNumber && !!secondary
+    readonly property bool hasCodexNumber: !!codexPrimary && codexStatus !== "expired"
+    readonly property bool hasCodexSecondary: hasCodexNumber && !!codexSecondary
+    readonly property bool hasAnyNumber: hasNumber || hasCodexNumber
+    readonly property bool hasCodexData: !!codex && codexStatus !== "missing" && codexStatus !== "loading"
+        && (hasCodexNumber || hasCodexSecondary || codexOthers.length > 0
+            || !!codex.planLabel || !!codex.credits || !!codex.statusLabel)
 
     // El tinte rojo del fondo se ata a `hasNumber` por el mismo motivo: sin
     // número que enseñar no hay severidad que señalar, y un candado sobre fondo
     // rojo diría «estás cerca del límite» sobre un dato que ya no se puede
     // comprobar. El `glyphOnly` del original tampoco pintaba `fill`.
-    readonly property bool warning: hasNumber && (!!(primary && primary.warning) || !!(secondary && secondary.warning))
+    readonly property bool warning: hasAnyNumber
+        && (!!(primary && primary.warning) || !!(secondary && secondary.warning)
+            || (codexStatus !== "expired"
+                && (!!(codexPrimary && codexPrimary.warning) || !!(codexSecondary && codexSecondary.warning)
+                    || !!(codex && codex.hiddenWarning))))
     readonly property bool hiddenWarning: !!(usage && usage.hiddenWarning)
+    readonly property bool codexHiddenWarning: codexStatus !== "expired" && !!(codex && codex.hiddenWarning)
 
-    // "Píldora atenuada" del spec §9: el dato no viene de un sondeo bueno.
+    // La antigüedad se pinta por proveedor: un fallo de Codex no atenúa los
+    // porcentajes frescos de Claude, ni al revés.
     readonly property bool dimmed: usageStatus === "stale"
+    readonly property bool codexDimmed: codexStatus === "stale"
 
     // El glifo de los estados sin número. El de cada ventana lo trae el daemon
     // dentro de `glyph` (hourglass_empty / calendar_month), que es lo que
     // codifica QUÉ ventana se está enseñando.
     readonly property string stateGlyph: {
-        if (usageStatus === "expired")
+        if (usageStatus === "expired" || codexStatus === "expired")
             return "key_off";
-        if (usageStatus === "loading")
+        if (usageStatus === "loading" || codexStatus === "loading")
             return "monitoring";
         return "cloud_off";
     }
@@ -206,8 +227,8 @@ PluginComponent {
     // ven igual de atenuadas y esa jerarquía se pierde mientras dure.
     readonly property real attenuatedAlpha: 0.7
 
-    function alphaFor(muted) {
-        return (root.dimmed || muted) ? root.attenuatedAlpha : 1.0;
+    function alphaFor(muted, stale) {
+        return (root.dimmed || stale || muted) ? root.attenuatedAlpha : 1.0;
     }
 
     function attenuate(c) {
@@ -218,15 +239,15 @@ PluginComponent {
     // segunda. El color base del icono y el del texto NO son el mismo rol: en
     // el modo "colorful" de DMS el texto va en `primary` y el icono en
     // `surfaceText`.
-    function windowIconColor(limit, muted) {
+    function windowIconColor(limit, muted, stale) {
         const base = (limit && limit.warning) ? Theme.error : Theme.widgetIconColor;
-        const a = root.alphaFor(muted);
+        const a = root.alphaFor(muted, stale);
         return a < 1.0 ? Theme.withAlpha(base, a) : base;
     }
 
-    function windowTextColor(limit, muted) {
+    function windowTextColor(limit, muted, stale) {
         const base = (limit && limit.warning) ? Theme.error : Theme.widgetTextColor;
-        const a = root.alphaFor(muted);
+        const a = root.alphaFor(muted, stale);
         return a < 1.0 ? Theme.withAlpha(base, a) : base;
     }
 
@@ -243,7 +264,8 @@ PluginComponent {
     // la barra. Es lo que hacía `barWidget.setVisible(false)`, incluido el ser
     // pegajoso: hay que volver a ponerlo a true en todos los demás caminos, y
     // por eso el handler pasa el valor en vez de llamar solo cuando se oculta.
-    readonly property bool pillHidden: !usage || usageStatus === "missing"
+    readonly property bool pillHidden: !usage
+        || (usageStatus === "missing" && codexStatus === "missing")
     onPillHiddenChanged: root.setVisibilityOverride(!root.pillHidden)
     Component.onCompleted: root.setVisibilityOverride(!root.pillHidden)
 
@@ -359,7 +381,7 @@ PluginComponent {
                 // Los estados sin número (cargando, caducado, sin conexión) son
                 // un glifo y nada más, igual que en el original.
                 DankIcon {
-                    visible: !root.hasNumber
+                    visible: !root.hasAnyNumber
                     name: root.stateGlyph
                     size: root.pillIconSize
                     color: Theme.surfaceVariantText
@@ -396,11 +418,31 @@ PluginComponent {
                     anchors.verticalCenter: parent.verticalCenter
                 }
 
+                // Codex ocupa una unidad compacta propia. La ventana principal
+                // es la que se ve en la barra; las secundarias y los límites
+                // adicionales viven en el popout y disparan este indicador.
+                StyledText {
+                    visible: root.hasCodexNumber && root.hasNumber
+                    text: "·"
+                    color: Theme.withAlpha(Theme.surfaceVariantText, root.codexDimmed ? root.attenuatedAlpha : 1.0)
+                    font.pixelSize: root.pillTextSize
+                    anchors.verticalCenter: parent.verticalCenter
+                }
+
+                WindowChunk {
+                    limit: root.hasCodexNumber ? root.codexPrimary : null
+                    iconColor: root.windowIconColor(root.codexPrimary, false, root.codexDimmed)
+                    textColor: root.windowTextColor(root.codexPrimary, false, root.codexDimmed)
+                    iconSize: root.pillIconSize
+                    textSize: root.pillTextSize
+                    anchors.verticalCenter: parent.verticalCenter
+                }
+
                 // El equivalente del punto de 4 px del original: la única forma
                 // de que un sublímite por modelo al 95 % no pase desapercibido,
                 // dado que en la píldora solo caben dos ventanas.
                 DankIcon {
-                    visible: root.hiddenWarning && root.hasNumber
+                    visible: (root.hiddenWarning || root.codexHiddenWarning) && root.hasAnyNumber
                     name: "error"
                     size: Math.round(root.pillIconSize * 0.65)
                     color: root.attenuate(Theme.error)
@@ -434,7 +476,7 @@ PluginComponent {
                 spacing: Theme.spacingXS
 
                 DankIcon {
-                    visible: !root.hasNumber
+                    visible: !root.hasAnyNumber
                     name: root.stateGlyph
                     size: root.pillIconSize
                     color: Theme.surfaceVariantText
@@ -470,8 +512,26 @@ PluginComponent {
                     anchors.horizontalCenter: parent.horizontalCenter
                 }
 
+                // En vertical Codex va después de las dos ventanas de Claude.
+                Rectangle {
+                    visible: root.hasCodexNumber && root.hasNumber
+                    width: Math.round(root.pillIconSize * 0.8)
+                    height: 1
+                    color: Theme.withAlpha(Theme.surfaceVariantText, root.codexDimmed ? root.attenuatedAlpha : 1.0)
+                    anchors.horizontalCenter: parent.horizontalCenter
+                }
+
+                WindowChunkStacked {
+                    limit: root.hasCodexNumber ? root.codexPrimary : null
+                    iconColor: root.windowIconColor(root.codexPrimary, false, root.codexDimmed)
+                    textColor: root.windowTextColor(root.codexPrimary, false, root.codexDimmed)
+                    iconSize: root.pillIconSize
+                    textSize: root.pillTextSize
+                    anchors.horizontalCenter: parent.horizontalCenter
+                }
+
                 DankIcon {
-                    visible: root.hiddenWarning && root.hasNumber
+                    visible: (root.hiddenWarning || root.codexHiddenWarning) && root.hasAnyNumber
                     name: "error"
                     size: Math.round(root.pillIconSize * 0.65)
                     color: root.attenuate(Theme.error)
@@ -650,6 +710,7 @@ PluginComponent {
     }
 
     readonly property var panelLimits: root.withoutScopedLimits(root.others, root.showScopedLimits)
+    readonly property var codexPanelLimits: root.codexOthers
     readonly property var extraUsage: usage ? usage.extraUsage : null
     readonly property bool hasExtraUsage: !!(extraUsage && (extraUsage.enabled || extraUsage.everEnabled))
 
@@ -657,6 +718,13 @@ PluginComponent {
     readonly property string footerLabel: (usage && usage.footerLabel) ? usage.footerLabel : ""
     readonly property string refreshLabel: (usage && usage.strings && usage.strings.refresh) ? usage.strings.refresh : ""
     readonly property string extraCreditsLabel: (usage && usage.strings && usage.strings.extraCredits) ? usage.strings.extraCredits : ""
+    readonly property string codexTitleLabel: (codex && codex.titleLabel) ? codex.titleLabel : ""
+    readonly property string codexPlanLabel: (codex && codex.planLabel) ? codex.planLabel : ""
+    readonly property string codexCreditsTitleLabel: (codex && codex.creditsTitleLabel) ? codex.creditsTitleLabel : ""
+    readonly property string codexCreditsLabel: (codex && codex.credits) ? codex.credits.label : ""
+    readonly property string codexStatusLabel: (codex && codex.statusLabel) ? codex.statusLabel : ""
+    readonly property string codexFooterLabel: (codex && codex.footerLabel) ? codex.footerLabel : ""
+    readonly property bool codexHasCredits: !!(codex && codex.credits)
 
     // El spec §7 no deja que un refresco a mano se trague en silencio.
     readonly property bool inFlight: !!(usage && usage.inFlight)
@@ -668,14 +736,17 @@ PluginComponent {
         return (usage && usage.source === "cache") ? "history" : "cloud_off";
     }
 
-    readonly property string primaryResets: {
-        const p = root.primary;
-        if (!p)
+    function resetText(limit) {
+        if (!limit)
             return "";
-        const abs = p.resetsAbs || "";
-        const rel = p.resetsRel || "";
+        const abs = limit.resetsAbs || "";
+        const rel = limit.resetsRel || "";
         return abs !== "" ? abs + " · " + rel : rel;
     }
+
+    readonly property string primaryResets: root.resetText(root.primary)
+    readonly property string codexPrimaryResets: root.resetText(root.codexPrimary)
+    readonly property string codexSecondaryResets: root.resetText(root.codexSecondary)
 
     // ── Piezas repetidas ─────────────────────────────────────────────────────
     // Como componentes en línea por el mismo motivo que WindowChunk: dos filas
@@ -855,7 +926,8 @@ PluginComponent {
                     Item {
                         width: parent.width
                         height: Math.max(stateIcon.implicitHeight, stateText.implicitHeight)
-                        visible: !root.hasNumber
+                        visible: (!root.hasAnyNumber && (root.statusLabel !== "" || root.codexStatusLabel !== ""))
+                            || root.usageStatus === "expired"
 
                         DankIcon {
                             id: stateIcon
@@ -864,7 +936,7 @@ PluginComponent {
                             anchors.verticalCenter: parent.verticalCenter
                             name: root.stateGlyph
                             size: Theme.iconSize - 4
-                            color: root.usageStatus === "expired" ? Theme.error : Theme.surfaceVariantText
+                            color: (root.usageStatus === "expired" || root.codexStatus === "expired") ? Theme.error : Theme.surfaceVariantText
                         }
 
                         StyledText {
@@ -874,7 +946,7 @@ PluginComponent {
                             anchors.leftMargin: Theme.spacingS
                             anchors.right: parent.right
                             anchors.verticalCenter: parent.verticalCenter
-                            text: root.statusLabel
+                            text: root.statusLabel !== "" ? root.statusLabel : root.codexStatusLabel
                             color: Theme.surfaceText
                             font.pixelSize: Theme.fontSizeMedium
                             wrapMode: Text.WordWrap
@@ -992,6 +1064,137 @@ PluginComponent {
                             visible: root.showExtraUsage && root.hasExtraUsage
                             label: root.extraCreditsLabel
                             value: root.extraUsage ? (root.extraUsage.usedLabel + " / " + root.extraUsage.limitLabel) : ""
+                        }
+                    }
+
+                    // ── Codex ────────────────────────────────────────────────
+                    // El proveedor tiene su propio bloque y su propio estado.
+                    // No se mezcla con `panelLimits` de Claude: así un límite
+                    // adicional de Codex no desplaza ni cambia el significado de
+                    // las ventanas de Claude.
+                    Column {
+                        width: parent.width
+                        spacing: Theme.spacingS
+                        visible: root.hasCodexData
+                        opacity: root.codexDimmed ? root.attenuatedAlpha : 1.0
+
+                        PanelDivider {
+                            visible: root.hasNumber
+                        }
+
+                        Row {
+                            width: parent.width
+                            spacing: Theme.spacingS
+
+                            DankIcon {
+                                name: "code"
+                                size: Theme.iconSize - 4
+                                color: Theme.widgetIconColor
+                                anchors.verticalCenter: parent.verticalCenter
+                            }
+
+                            Column {
+                                width: parent.width - Theme.iconSize
+                                spacing: 1
+
+                                StyledText {
+                                    width: parent.width
+                                    text: root.codexTitleLabel
+                                    color: Theme.surfaceText
+                                    font.pixelSize: Theme.fontSizeMedium
+                                    font.weight: Font.Bold
+                                    elide: Text.ElideRight
+                                }
+
+                                StyledText {
+                                    width: parent.width
+                                    visible: root.codexPlanLabel !== ""
+                                    text: root.codexPlanLabel
+                                    color: Theme.surfaceVariantText
+                                    font.pixelSize: Theme.fontSizeSmall
+                                    elide: Text.ElideRight
+                                }
+                            }
+                        }
+
+                        StyledText {
+                            width: parent.width
+                            visible: root.codexStatusLabel !== ""
+                            text: root.codexStatusLabel
+                            color: Theme.error
+                            font.pixelSize: Theme.fontSizeSmall
+                            wrapMode: Text.WordWrap
+                        }
+
+                        DetailRow {
+                            visible: root.hasCodexNumber
+                            label: root.codexPrimary ? root.codexPrimary.label : ""
+                            value: root.codexPrimary ? root.codexPrimary.percent + " %" : ""
+                            valueColor: (root.codexPrimary && root.codexPrimary.warning) ? Theme.error : Theme.surfaceText
+                            fontWeight: Font.Bold
+                        }
+
+                        UsageBar {
+                            visible: root.hasCodexNumber
+                            width: parent.width
+                            percent: root.codexPrimary ? root.codexPrimary.percent : 0
+                            fillColor: (root.codexPrimary && root.codexPrimary.warning) ? Theme.error : Theme.primary
+                        }
+
+                        StyledText {
+                            width: parent.width
+                            visible: root.codexPrimaryResets !== ""
+                            text: root.codexPrimaryResets
+                            color: Theme.surfaceVariantText
+                            font.pixelSize: Theme.fontSizeSmall
+                            elide: Text.ElideRight
+                        }
+
+                        DetailRow {
+                            visible: root.hasCodexSecondary
+                            label: root.codexSecondary ? root.codexSecondary.label : ""
+                            value: root.codexSecondary ? root.codexSecondary.percent + " %" : ""
+                            valueColor: (root.codexSecondary && root.codexSecondary.warning) ? Theme.error : Theme.surfaceText
+                        }
+
+                        StyledText {
+                            width: parent.width
+                            visible: root.codexSecondaryResets !== ""
+                            text: root.codexSecondaryResets
+                            color: Theme.surfaceVariantText
+                            font.pixelSize: Theme.fontSizeSmall
+                            elide: Text.ElideRight
+                        }
+
+                        PanelDivider {
+                            visible: root.codexPanelLimits.length > 0 || root.codexHasCredits
+                        }
+
+                        Repeater {
+                            model: root.codexPanelLimits
+
+                            delegate: DetailRow {
+                                required property var modelData
+
+                                label: modelData ? modelData.label : ""
+                                value: modelData ? modelData.percent + " %" : ""
+                                valueColor: (modelData && modelData.warning) ? Theme.error : Theme.surfaceText
+                            }
+                        }
+
+                        DetailRow {
+                            visible: root.codexHasCredits
+                            label: root.codexCreditsTitleLabel
+                            value: root.codexCreditsLabel
+                        }
+
+                        StyledText {
+                            width: parent.width
+                            visible: root.codexFooterLabel !== ""
+                            text: root.codexFooterLabel
+                            color: root.codexDimmed ? Theme.warning : Theme.surfaceVariantText
+                            font.pixelSize: Theme.fontSizeSmall
+                            elide: Text.ElideRight
                         }
                     }
 

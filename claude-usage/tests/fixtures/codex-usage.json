@@ -1,0 +1,51 @@
+{
+  "plan_type": "pro",
+  "rate_limit": {
+    "allowed": true,
+    "limit_reached": false,
+    "primary_window": {
+      "used_percent": 13,
+      "limit_window_seconds": 604800,
+      "reset_after_seconds": 10000,
+      "reset_at": 1790000000
+    },
+    "secondary_window": {
+      "used_percent": 42.4,
+      "limit_window_seconds": 18000,
+      "reset_after_seconds": 5000,
+      "reset_at": 1789000000
+    }
+  },
+  "additional_rate_limits": [
+    {
+      "limit_name": "Spark",
+      "metered_feature": "codex_spark",
+      "rate_limit": {
+        "allowed": false,
+        "limit_reached": true,
+        "primary_window": {
+          "used_percent": 103,
+          "limit_window_seconds": 604800,
+          "reset_at": 1791000000
+        },
+        "secondary_window": null
+      }
+    },
+    {
+      "metered_feature": "ignored_without_window",
+      "rate_limit": {
+        "allowed": true,
+        "primary_window": { "used_percent": "not-a-number" }
+      }
+    },
+    "not-an-object"
+  ],
+  "credits": {
+    "has_credits": true,
+    "unlimited": false,
+    "balance": "12.50"
+  },
+  "spend_control": {
+    "monthly_limit": 100
+  }
+}

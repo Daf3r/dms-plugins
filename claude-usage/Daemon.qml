@@ -79,12 +79,21 @@ PluginComponent {
     readonly property string endpoint: "https://api.anthropic.com/api/oauth/usage"
     readonly property string credentialsPath: "~/.claude/.credentials.json"
     readonly property string cachePath: "~/.claude.json"
+    // Endpoint privado que usa Codex CLI cuando la sesión es ChatGPT. No es una
+    // API pública: si cambia, el estado Codex se degrada sin afectar a Claude.
+    readonly property string codexEndpoint: "https://chatgpt.com/backend-api/wham/usage"
+    readonly property string codexAuthPath: "~/.codex/auth.json"
 
     // ── Estado interno (los `local` del original) ─────────────────────────────
     property int failures: 0
+    property int codexFailures: 0
     property bool inFlight: false
+    property bool codexStarted: false
+    property bool currentWarning: false
+    property string codexStatus: "loading"
     property var notifyState: ({})
     property var lastModel: null
+    property var lastCodexModel: null
 
     // ¿Se pudo cargar el antirrebote? Mientras sea false NO se notifica: sin él
     // cada arranque repetiría los mismos avisos. `notifyStateDegraded` es el
@@ -517,11 +526,11 @@ PluginComponent {
             watchChanges: false
 
             onLoaded: {
+                const loadedText = view.text();
                 const callback = view.deliver;
-                const text = view.text();
-                view.destroy();
                 if (callback)
-                    callback(typeof text === "string" && text !== "" ? text : null);
+                    callback(typeof loadedText === "string" && loadedText !== "" ? loadedText : null);
+                view.destroy();
             }
 
             // FileViewError: 1 Unknown, 2 FileNotFound, 3 PermissionDenied,
@@ -532,9 +541,9 @@ PluginComponent {
             // nuevo: sin credenciales -> "missing", sin caché -> "stale".
             onLoadFailed: err => {
                 const callback = view.deliver;
-                view.destroy();
                 if (callback)
                     callback(null);
+                view.destroy();
             }
         }
     }
@@ -571,8 +580,9 @@ PluginComponent {
             warning: Logic.isWarning(limit, threshold),
             // Nombres de Material Symbols, que es el juego de iconos de DMS.
             // Los de Noctalia eran "hourglass" y "calendar": el segundo no
-            // existe en esta fuente y no habría pintado nada.
-            glyph: limit.key === "session" ? "hourglass_empty" : "calendar_month",
+            // existe en esta fuente y no habría pintado nada. Codex proporciona
+            // su propio glifo para que no se confunda con las ventanas de Claude.
+            glyph: limit.glyph ? limit.glyph : (limit.key === "session" ? "hourglass_empty" : "calendar_month"),
             resetsRel: root.render(Logic.describeRelative(limit.resetsAt, nowMs)),
             resetsAbs: root.render(Logic.describeAbsolute(limit.resetsAt, nowMs))
         };
@@ -630,6 +640,88 @@ PluginComponent {
             out[key] = extra[key];
         out.usedLabel = moneyLabel(extra.usedMinor, extra);
         out.limitLabel = moneyLabel(extra.limitMinor, extra);
+        return out;
+    }
+
+    function decorateCodexCredits(credits) {
+        if (!credits)
+            return null;
+        let label;
+        if (credits.unlimited)
+            label = root.tr("codex.creditsUnlimited");
+        else if (credits.balance !== null)
+            label = root.tr("codex.creditsBalance", { balance: credits.balance });
+        else if (credits.hasCredits)
+            label = root.tr("codex.creditsAvailable");
+        else
+            label = root.tr("codex.creditsNone");
+        return {
+            label: label,
+            balance: credits.balance,
+            unlimited: credits.unlimited,
+            hasCredits: credits.hasCredits
+        };
+    }
+
+    function codexStatusLabelFor(status, model) {
+        if (status === "loading")
+            return root.tr("state.codexLoading");
+        if (status === "expired")
+            return root.tr("state.codexExpired");
+        if (status === "stale" && !model)
+            return root.tr("state.codexOffline");
+        return "";
+    }
+
+    function codexFooterLabelFor(status, fetchedAtLabel) {
+        let marker = "";
+        if (status === "stale")
+            marker = root.tr("state.codexOffline");
+        else if (status === "expired")
+            marker = root.tr("state.codexExpiredShort");
+        if (marker !== "" && fetchedAtLabel)
+            return marker + " · " + fetchedAtLabel;
+        return marker || (fetchedAtLabel || "");
+    }
+
+    function decorateCodexState(status, model, threshold, showRemaining, nowMs) {
+        const out = {
+            status: status,
+            source: model ? model.source : null,
+            primary: null,
+            secondary: null,
+            others: [],
+            hiddenWarning: false,
+            planLabel: null,
+            credits: null,
+            fetchedAtLabel: null,
+            statusLabel: codexStatusLabelFor(status, model),
+            footerLabel: "",
+            titleLabel: root.tr("codex.title"),
+            creditsTitleLabel: root.tr("codex.credits")
+        };
+        if (!model)
+            return out;
+
+        const primary = Logic.pickCodexPrimary(model.limits);
+        const secondary = Logic.pickCodexSecondary(model.limits);
+        const primaryKey = primary ? primary.key : null;
+        const secondaryKey = secondary ? secondary.key : null;
+        const sorted = Logic.sortCodexForPanel(model.limits, primaryKey, secondaryKey);
+        for (let i = 0; i < sorted.length; i++)
+            out.others.push(decorate(sorted[i], threshold, showRemaining, nowMs));
+
+        out.primary = decorate(primary, threshold, showRemaining, nowMs);
+        out.secondary = decorate(secondary, threshold, showRemaining, nowMs);
+        out.hiddenWarning = Logic.hasCodexHiddenWarning(model.limits, primaryKey, secondaryKey, threshold);
+        out.credits = decorateCodexCredits(model.credits);
+        if (model.planType)
+            out.planLabel = root.tr("codex.planValue", { plan: model.planType });
+
+        out.fetchedAtLabel = model.fetchedAt === null ? null : root.tr("panel.updatedAgo", {
+            age: Logic.formatAge(model.fetchedAt, nowMs)
+        });
+        out.footerLabel = codexFooterLabelFor(status, out.fetchedAtLabel);
         return out;
     }
 
@@ -694,6 +786,7 @@ PluginComponent {
         const showRemaining = getConfig("show_remaining") === true;
         const nowMs = Date.now();
         const resolvedSource = (source === undefined || source === null) ? null : source;
+        const codex = decorateCodexState(root.codexStatus, root.lastCodexModel, threshold, showRemaining, nowMs);
 
         if (!model) {
             // El original publicaba aquí solo tres claves. Se publica la forma
@@ -713,7 +806,8 @@ PluginComponent {
                 statusLabel: statusLabelFor(status, null),
                 footerLabel: footerLabelFor(status, resolvedSource, null),
                 inFlight: root.inFlight,
-                strings: uiStrings()
+                strings: uiStrings(),
+                codex: codex
             });
             return;
         }
@@ -747,7 +841,8 @@ PluginComponent {
             statusLabel: statusLabelFor(status, model),
             footerLabel: footerLabelFor(status, resolvedSource, fetchedAtLabel),
             inFlight: root.inFlight,
-            strings: uiStrings()
+            strings: uiStrings(),
+            codex: codex
         });
     }
 
@@ -816,7 +911,7 @@ PluginComponent {
     function applyCadence(warning, retryAfterSeconds) {
         const seconds = Logic.nextInterval({
             warning: warning,
-            failures: root.failures,
+            failures: Math.max(root.failures, root.codexFailures),
             idleInterval: getConfig("idle_interval"),
             alertInterval: getConfig("alert_interval"),
             // Logic.nextInterval YA tiene la rama de Retry-After (tarea 5):
@@ -944,8 +1039,19 @@ PluginComponent {
 
     // ── Sondeo ───────────────────────────────────────────────────────────────
 
-    function endPoll() {
+    function endPoll(skipCodex) {
+        if (!root.inFlight)
+            return;
+        // Claude termina primero para conservar la arquitectura existente; el
+        // mismo ciclo hace a continuación una sola petición de Codex. Así el
+        // daemon sigue siendo único aunque haya dos proveedores.
+        if (!root.codexStarted && skipCodex !== true) {
+            root.codexStarted = true;
+            root.pollCodex();
+            return;
+        }
         root.inFlight = false;
+        root.codexStarted = false;
     }
 
     // Ninguna continuación de la cadena llegó. Se cuenta como fallo y se libera
@@ -956,11 +1062,18 @@ PluginComponent {
     // estado nuevo.
     function pollStalled() {
         console.warn("claudeUsage: el sondeo se quedó sin respuesta; se aborta y se cuenta como fallo");
+        const codexWasStarted = root.codexStarted;
         root.failures += 1;
-        root.endPoll();
+        if (codexWasStarted) {
+            root.codexFailures += 1;
+            root.codexStatus = "stale";
+        }
+        root.endPoll(true);
         if (root.lastModel)
             root.publish("stale", root.lastModel, root.lastModel.source, root.lastModel.fetchedAt);
-        root.applyCadence(false);
+        else
+            root.publish("stale", null);
+        root.applyCadence(root.currentWarning);
     }
 
     // Noctalia exponía `HttpResponse = { ok, status, body }` y su `ok` NO
@@ -1006,10 +1119,13 @@ PluginComponent {
             return;
 
         root.inFlight = true;
+        root.codexStarted = false;
+        root.currentWarning = false;
 
         readTextFile(localPath(root.credentialsPath), function (credText) {
             if (!credText) {
                 root.publish("missing", null);
+                root.applyCadence(false);
                 root.endPoll();
                 return;
             }
@@ -1018,11 +1134,13 @@ PluginComponent {
 
             if (creds.status === "expired") {
                 root.publishExpired();
+                root.applyCadence(false);
                 root.endPoll();
                 return;
             }
             if (creds.status !== "ok") {
                 root.publish("missing", null);
+                root.applyCadence(false);
                 root.endPoll();
                 return;
             }
@@ -1071,6 +1189,127 @@ PluginComponent {
         }
     }
 
+    function finishCodexFailure(status, retryAfterSeconds) {
+        if (status === "expired") {
+            root.codexStatus = "expired";
+        } else {
+            root.codexFailures += 1;
+            root.codexStatus = "stale";
+        }
+        // El modelo anterior se conserva solo en memoria. No se publica el
+        // token ni se escribe otra caché: la UI recibe el dato atenuado o el
+        // estado de ausencia/caducidad, según corresponda.
+        root.republishFromState();
+        root.applyCadence(root.currentWarning, retryAfterSeconds);
+        root.endPoll();
+    }
+
+    function pollCodex() {
+        readTextFile(localPath(root.codexAuthPath), function (authText) {
+            if (!authText) {
+                root.codexStatus = "missing";
+                root.codexFailures = 0;
+                root.lastCodexModel = null;
+                root.republishFromState();
+                root.endPoll();
+                return;
+            }
+
+            const parsedAuth = Logic.safeParse(authText);
+            let creds;
+            try {
+                creds = Logic.parseCodexCredentials(parsedAuth);
+            } catch (error) {
+                root.codexStatus = "missing";
+                root.codexFailures = 0;
+                root.lastCodexModel = null;
+                root.republishFromState();
+                root.endPoll();
+                return;
+            }
+            if (creds.status !== "ok") {
+                root.codexStatus = "missing";
+                root.codexFailures = 0;
+                root.lastCodexModel = null;
+                root.republishFromState();
+                root.endPoll();
+                return;
+            }
+            root.requestCodexUsage(creds.token, creds.accountId);
+        });
+    }
+
+    function requestCodexUsage(token, accountId) {
+        let delivered = false;
+        function fail() {
+            if (delivered)
+                return;
+            delivered = true;
+            root.finishCodexFailure("stale", null);
+        }
+
+        let xhr;
+        try {
+            xhr = new XMLHttpRequest();
+        } catch (e) {
+            fail();
+            return;
+        }
+
+        xhr.onreadystatechange = function () {
+            if (xhr.readyState !== XMLHttpRequest.DONE || delivered)
+                return;
+            delivered = true;
+            root.handleCodexResponse(xhr);
+        };
+
+        try {
+            xhr.open("GET", root.codexEndpoint);
+            // El access token de Codex vive SOLO en esta variable local y en la
+            // cabecera. Nunca se copia al estado global ni a un log.
+            xhr.setRequestHeader("Authorization", "Bearer " + token);
+            if (accountId !== null)
+                xhr.setRequestHeader("ChatGPT-Account-Id", accountId);
+            xhr.send();
+        } catch (e) {
+            fail();
+        }
+    }
+
+    function handleCodexResponse(xhr) {
+        const status = xhr.status;
+        if (!transportOk(xhr) || status >= 500 || status === 429) {
+            root.finishCodexFailure("stale", retryAfterFrom(xhr));
+            return;
+        }
+        if (status === 401 || status === 403) {
+            root.finishCodexFailure("expired", null);
+            return;
+        }
+        if (status >= 400) {
+            root.finishCodexFailure("stale", null);
+            return;
+        }
+
+        const payload = Logic.safeParse(xhr.responseText);
+        if (!payload || typeof payload !== "object" || Array.isArray(payload)) {
+            root.finishCodexFailure("stale", null);
+            return;
+        }
+
+        const nowMs = Date.now();
+        root.codexFailures = 0;
+        root.codexStatus = "ok";
+        root.lastCodexModel = Logic.normalizeCodexUsage(payload, "api", nowMs);
+        root.republishFromState();
+
+        const threshold = configOr("warn_threshold", Logic.DEFAULT_WARN_THRESHOLD);
+        const warning = Logic.hasCodexWarning(root.lastCodexModel.limits, threshold);
+        root.currentWarning = root.currentWarning || warning;
+        root.applyCadence(root.currentWarning);
+        root.endPoll();
+    }
+
     function handleResponse(xhr) {
         const status = xhr.status;
 
@@ -1106,6 +1345,7 @@ PluginComponent {
         const threshold = configOr("warn_threshold", Logic.DEFAULT_WARN_THRESHOLD);
         const primary = Logic.pickPrimary(model.limits);
         const warning = Logic.isWarning(primary, threshold) || Logic.hasHiddenWarning(model.limits, null, threshold);
+        root.currentWarning = warning;
 
         // Las notificaciones cubren TODOS los límites, no solo el que cabe en
         // el widget, y solo salen de datos de la API: esta rama es la única que

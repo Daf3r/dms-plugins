@@ -1,12 +1,13 @@
 # claude-usage
 
-Your Claude subscription usage, in the DankMaterialShell bar.
+Your Claude subscription usage — and, when available, your Codex usage — in the
+DankMaterialShell bar.
 
-The pill shows **two** windows side by side: the 5-hour session limit first, and
-the weekly limit second, dimmed.
+The pill shows the two Claude windows side by side and a compact Codex primary
+window when Codex CLI is logged in with ChatGPT:
 
 ```
-⏳ 44  ·  📅 84
+⏳ 44  ·  📅 84  ·  code 13
 ```
 
 Both slots are fixed. The session window is the one you can act on — it comes
@@ -17,10 +18,11 @@ appears next to the pill when any limit that is *not* the session one crosses th
 threshold, which is the only hint that a per-model sublimit is in trouble without
 opening the popout.
 
-Clicking the pill opens a popout with the full breakdown: every window with its
-progress bar and reset time, the per-model sublimits, extra credit spend, and a
-footer saying where the number came from and how old it is, with a refresh
-button.
+Clicking the pill opens a popout with the full breakdown: every Claude window
+with its progress bar and reset time, the per-model sublimits, extra credit
+spend, and —when Codex is available— its primary/secondary windows, additional
+rate limits, plan and credits. The footer says where each number came from and
+how old it is, with a refresh button.
 
 ## Where the data comes from, and the two things you should know first
 
@@ -48,8 +50,17 @@ plugin parses it **only** when the API call fails and there is no good value in
 memory, so that a shell restart during an outage still shows something rather
 than nothing. It never notifies from cached data.
 
+Codex is optional. When `~/.codex/auth.json` contains the ChatGPT OAuth session
+that Codex CLI uses, the daemon calls `https://chatgpt.com/backend-api/wham/usage`
+read-only with the same bearer token and the optional `ChatGPT-Account-Id`
+header. This is also an undocumented/private endpoint: it is derived from the
+installed Codex CLI, not a public OpenAI usage API. A missing Codex session, an
+API-key-only login, a 401/403, or a backend shape change leaves Claude working
+and hides or dims only the Codex block. The Codex token is never logged or
+published in `usage`.
+
 There is nothing to configure. If Claude Code works on this machine, so does
-this.
+this; Codex appears automatically when its ChatGPT session is present.
 
 ## When something fails
 
@@ -61,6 +72,8 @@ leaves a number on screen without marking where it came from**:
 | Normal | Freshly fetched. Full brightness. |
 | Dimmed | The API is not answering. The number is the last good one, and the popout says whether it came from memory (*Offline · 8 min ago*) or from disk (*Local cache · 4 days ago*). With no value anywhere — an outage on a cold start — there is no number at all, just a `cloud_off` glyph. |
 | Expired session | The OAuth token expired. The pill collapses to a `key_off` glyph with no number. Open Claude Code to renew it. |
+| Codex unavailable | No ChatGPT OAuth session is present. The Claude meter is unchanged and the Codex unit is omitted. |
+| Codex expired/offline | Codex shows no fresh number, or a dimmed last value with its own offline/age marker; Claude is unaffected. |
 | Loading | First poll after startup. A `monitoring` glyph, no number. |
 | Hidden | No credentials to read, or the file is unparseable. The widget **hides itself entirely** rather than take up space to say nothing — and logs nothing, because what is unparseable is a credentials file. |
 
@@ -97,7 +110,7 @@ already-computed state object; the pill and the popout only paint it. Neither
 `Widget.qml` nor `Settings.qml` makes a single request.
 
 ```
-Daemon.qml   HTTPS (XMLHttpRequest) · credentials + cache (FileView) · timer · toasts
+Daemon.qml   HTTPS (Claude + Codex) · credentials + cache (FileView) · timer · toasts
    │         publishes the global var `usage`, fully computed and already translated
    ├──→ Widget.qml     pill (once per screen) + popout
    └──→ Settings.qml   the seven settings (once, inside the settings modal)
@@ -211,7 +224,7 @@ fish claude-usage/tests/run-js.fish
 Needs `node` from the `dms-plugins` devshell (direnv activates it on entering the
 project); outside direnv,
 `nix develop ~/nixos-config#dms-plugins -c fish claude-usage/tests/run-js.fish`.
-187 cases, and no shell required to run them.
+201 cases, and no shell required to run them.
 
 What the tests *cannot* see — everything that only exists when the environment
 breaks — is walked by hand in [`tests/MANUAL.md`](tests/MANUAL.md).

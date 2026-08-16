@@ -91,7 +91,7 @@ var SPEC_SETTING_KEYS = [
 // de los espacios de nombres seguido de al menos un punto. Exigir el punto evita
 // tragarse un "state" o un "format" sueltos de QML, que no son claves.
 var KEY_LITERAL =
-    /["'](title|(?:settings|state|panel|limit|time|reset|weekday|format|notify)\.[A-Za-z0-9_.]+)["']/g;
+    /["'](title|(?:settings|state|panel|limit|time|reset|weekday|format|notify|codex)\.[A-Za-z0-9_.]+)["']/g;
 
 function keyLiteralsIn(text) {
     var found = [];
@@ -243,7 +243,9 @@ describe("traducciones / claves que produce logic.js", function () {
         Logic.describeAbsolute(ms(2026, 8, 7, 19, 30), NOW), // hoy
         Logic.describeAbsolute(ms(2026, 8, 8, 7, 0), NOW), // mañana
         Logic.describeAbsolute(ms(2026, 8, 10, 7, 0), NOW), // día de la semana
-        Logic.describeAbsolute(ms(2026, 8, 20, 7, 0), NOW) // fecha
+        Logic.describeAbsolute(ms(2026, 8, 20, 7, 0), NOW), // fecha
+        Logic.codexLabelDescriptor(null, 604800),
+        Logic.codexLabelDescriptor("Spark", 18000)
     ];
 
     test("cada clave de descriptor está en los dos idiomas", function () {

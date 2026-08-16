@@ -5,10 +5,10 @@ estados de error, no: solo existen cuando algo del entorno falla, y forzarlos
 requiere el shell real (spec §9). Esta es la lista, con el procedimiento exacto
 y hueco para anotar lo observado.
 
-> **Estado: pasada NO ejecutada sobre el build de DMS.** daf3r la dio por
+> **Estado: pasada general NO ejecutada sobre el build de DMS.** daf3r la dio por
 > innecesaria el 2026-08-10, tras verificar el plugin en vivo (píldora de dos
 > ranuras, popout completo, anillo, panel de ajustes, respaldo por caché) y con
-> la suite en 189/189. La columna «Observado» de la tabla es de la pasada del
+> la suite en 201/201. La columna «Observado» de la tabla es de la pasada del
 > 2026-08-08 **sobre el build de Luau**, no sobre este: no la leas como
 > evidencia de DMS. El procedimiento queda aquí para cuando haga falta.
 
@@ -114,6 +114,32 @@ bindings sobre `usageState.value`, y los estados sin número se distinguen por
 `root.usageStatus` dentro del mismo árbol declarativo. Lo que sigue mereciendo
 una mirada en cada pasada es el resultado, no la causa: que la píldora **cambie**
 de verdad al entrar en un estado sin número, en lugar de dejar el número viejo.
+
+## Verificación manual específica de Codex
+
+Esta integración sí se activó temporalmente en el DMS que estaba corriendo,
+mediante un symlink reversible hacia este árbol local. Se verificó el flujo real
+de autenticación, HTTP 200 y normalización de dos límites; además, daf3r confirmó
+visualmente la tercera unidad y el bloque Codex del popout. El build administrado
+por Nix todavía no se ha actualizado, así que la lista siguiente conserva los
+casos de regresión que conviene repetir tras `flake update` y `nh os switch`:
+
+1. `codex login status` informa una sesión ChatGPT sin imprimir `auth.json`.
+2. Tras un sondeo bueno, la barra conserva las dos unidades de Claude y añade la
+   unidad compacta con glifo `code` y porcentaje de la ventana principal de
+   Codex.
+3. El popout muestra el bloque Codex, su ventana principal/secundaria, los
+   límites adicionales, el plan y los créditos si la respuesta los entrega.
+4. Un 401/403 de Codex muestra la caducidad de Codex o deja solo su estado, pero
+   no oculta ni cambia los números frescos de Claude. Un 5xx/429 atenúa solo el
+   último dato Codex, si existe.
+5. Sin `~/.codex/auth.json` o con una sesión API-key-only, Claude sigue visible y
+   el bloque Codex no ocupa espacio.
+6. El journal no contiene el bearer de Codex ni el de Claude. La comprobación
+   existente de la sección siguiente debe seguir devolviendo `sin fugas`.
+
+No se debe renombrar ni editar el `auth.json` real durante la comprobación: el
+endpoint es privado y el token pertenece a la sesión activa de Codex.
 
 ## Comprobaciones transversales
 

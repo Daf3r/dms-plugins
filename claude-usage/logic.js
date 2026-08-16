@@ -697,6 +697,182 @@ function extractCache(doc) {
 }
 
 // ---------------------------------------------------------------------------
+// Codex: credenciales y normalización
+// ---------------------------------------------------------------------------
+
+// Codex CLI guarda la sesión ChatGPT en ~/.codex/auth.json. La forma de API key
+// no trae tokens.access_token y, por diseño, no se intenta convertirla en una
+// consulta de uso: este endpoint pertenece a la sesión ChatGPT, no al consumo
+// de la API de OpenAI.
+function parseCodexCredentials(doc) {
+    var invalid = { status: "invalid", token: null, accountId: null };
+    if (!isTable(doc)) return invalid;
+    if (!isTable(doc.tokens)) return invalid;
+
+    var token = nonEmptyString(doc.tokens.access_token);
+    if (token === null) return invalid;
+
+    return {
+        status: "ok",
+        token: token,
+        accountId: nonEmptyString(doc.tokens.account_id)
+    };
+}
+
+// El backend de Codex entrega los resets como epoch en segundos, a diferencia
+// del contrato interno del plugin. Toda conversión sigue pasando por
+// toMilliseconds; no se multiplica a mano en otra función.
+function codexResetMs(value) {
+    var seconds = num(value, null);
+    if (seconds === null || seconds <= 0 || seconds === Infinity)
+        return null;
+    return validMs(toMilliseconds(seconds));
+}
+
+function codexWindowDuration(value) {
+    var seconds = num(value, null);
+    if (seconds === null || seconds <= 0 || seconds === Infinity)
+        return null;
+    return durationText(toMilliseconds(seconds), false);
+}
+
+function codexLabelDescriptor(name, windowSeconds) {
+    var duration = codexWindowDuration(windowSeconds);
+    var named = nonEmptyString(name);
+    if (duration === null)
+        return named === null
+            ? { key: "limit.codex" }
+            : { key: "limit.codexNamed", params: { name: named } };
+    return named === null
+        ? { key: "limit.codexWindow", params: { duration: duration } }
+        : { key: "limit.codexNamedWindow", params: { name: named, duration: duration } };
+}
+
+function codexPercent(value) {
+    var percent = num(value, null);
+    if (percent === null) return null;
+    return Math.max(0, Math.min(100, round(percent)));
+}
+
+function appendCodexWindow(limits, key, name, window, role, reached) {
+    if (!isTable(window)) return;
+    var percent = codexPercent(window.used_percent);
+    if (percent === null) return;
+
+    limits.push({
+        key: key,
+        label: codexLabelDescriptor(name, window.limit_window_seconds),
+        percent: percent,
+        severity: reached ? "critical" : "normal",
+        resetsAt: codexResetMs(window.reset_at),
+        scope: nonEmptyString(name),
+        primary: role === "primary",
+        codexPrimary: role === "primary",
+        codexSecondary: role === "secondary",
+        glyph: "code"
+    });
+}
+
+function codexLimitReached(rateLimit) {
+    if (!isTable(rateLimit)) return false;
+    return rateLimit.limit_reached === true || rateLimit.allowed === false;
+}
+
+function normalizeCodexCredits(value) {
+    if (!isTable(value)) return null;
+    return {
+        hasCredits: value.has_credits === true,
+        unlimited: value.unlimited === true,
+        balance: nonEmptyString(value.balance)
+    };
+}
+
+function normalizeCodexUsage(payload, source, fetchedAtMs) {
+    var result = {
+        limits: [],
+        source: source,
+        fetchedAt: fetchedAtMs === undefined ? null : fetchedAtMs,
+        planType: null,
+        credits: null
+    };
+    if (!isTable(payload)) return result;
+
+    var rate = payload.rate_limit;
+    if (isTable(rate)) {
+        appendCodexWindow(result.limits, "codex:primary", null,
+                          rate.primary_window, "primary", codexLimitReached(rate));
+        appendCodexWindow(result.limits, "codex:secondary", null,
+                          rate.secondary_window, "secondary", codexLimitReached(rate));
+    }
+
+    var additional = payload.additional_rate_limits;
+    if (Array.isArray(additional)) {
+        for (var i = 0; i < additional.length; i++) {
+            var item = additional[i];
+            if (!isTable(item) || !isTable(item.rate_limit)) continue;
+            var name = nonEmptyString(item.limit_name);
+            if (name === null) name = nonEmptyString(item.metered_feature);
+            var prefix = "codex:additional:" + i;
+            var reached = codexLimitReached(item.rate_limit);
+            appendCodexWindow(result.limits, prefix + ":primary", name,
+                              item.rate_limit.primary_window, "additional", reached);
+            appendCodexWindow(result.limits, prefix + ":secondary", name,
+                              item.rate_limit.secondary_window, "additional", reached);
+        }
+    }
+
+    result.planType = nonEmptyString(payload.plan_type);
+    result.credits = normalizeCodexCredits(payload.credits);
+    return result;
+}
+
+function pickCodexPrimary(limits) {
+    if (!isTable(limits)) return null;
+    for (var i = 0; i < limits.length; i++) {
+        if (isTable(limits[i]) && limits[i].codexPrimary) return limits[i];
+    }
+    return null;
+}
+
+function pickCodexSecondary(limits) {
+    if (!isTable(limits)) return null;
+    for (var i = 0; i < limits.length; i++) {
+        if (isTable(limits[i]) && limits[i].codexSecondary) return limits[i];
+    }
+    return null;
+}
+
+function sortCodexForPanel(limits, primaryKey, secondaryKey) {
+    if (!isTable(limits)) return [];
+    var rest = [];
+    for (var i = 0; i < limits.length; i++) {
+        if (!isTable(limits[i])) continue;
+        if (limits[i].key === primaryKey || limits[i].key === secondaryKey) continue;
+        rest.push(limits[i]);
+    }
+    rest.sort(byCriticality);
+    return rest;
+}
+
+function hasCodexHiddenWarning(limits, primaryKey, secondaryKey, threshold) {
+    if (!isTable(limits)) return false;
+    for (var i = 0; i < limits.length; i++) {
+        if (isTable(limits[i]) && limits[i].key !== primaryKey
+            && limits[i].key !== secondaryKey && isWarning(limits[i], threshold))
+            return true;
+    }
+    return false;
+}
+
+function hasCodexWarning(limits, threshold) {
+    if (!isTable(limits)) return false;
+    for (var i = 0; i < limits.length; i++) {
+        if (isTable(limits[i]) && isWarning(limits[i], threshold)) return true;
+    }
+    return false;
+}
+
+// ---------------------------------------------------------------------------
 // Notificaciones
 // ---------------------------------------------------------------------------
 
@@ -825,6 +1001,17 @@ var publicApi = {
     safeParse: safeParse,
     parseCredentials: parseCredentials,
     extractCache: extractCache,
+    parseCodexCredentials: parseCodexCredentials,
+    codexResetMs: codexResetMs,
+    codexWindowDuration: codexWindowDuration,
+    codexLabelDescriptor: codexLabelDescriptor,
+    normalizeCodexCredits: normalizeCodexCredits,
+    normalizeCodexUsage: normalizeCodexUsage,
+    pickCodexPrimary: pickCodexPrimary,
+    pickCodexSecondary: pickCodexSecondary,
+    sortCodexForPanel: sortCodexForPanel,
+    hasCodexHiddenWarning: hasCodexHiddenWarning,
+    hasCodexWarning: hasCodexWarning,
     notificationsFor: notificationsFor
 };
 
